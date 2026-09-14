@@ -76,9 +76,21 @@ class Benchmark:
     strip_prefix: str | None = None  # repo subpath relocated to the folder root
     dataset_subpath: str | None = None  # dataset_dir points below the folder root
     config_note: str | None = None  # extra fields the user must still set
+    stats_variants: tuple[str, ...] = ("clean_50", "both")
 
 
 BENCHMARKS: dict[str, Benchmark] = {
+    "0": Benchmark(
+            "RoboTwin2.0-clean_50",
+            "TianxingChen/RoboTwin2.0",
+            "robotwin2.0",
+            approx_gb=25.0,
+            config="robotwin.yaml",
+            dataset_subpath="dataset",
+            # Only the clean_50 archives are needed for the clean-video run.
+            allow_patterns=("dataset/*/aloha-agilex_clean_50.zip",),
+            stats_variants=("clean_50",),
+    ),
     "1": Benchmark(
         "RoboTwin2.0",
         "TianxingChen/RoboTwin2.0",
@@ -90,7 +102,7 @@ BENCHMARKS: dict[str, Benchmark] = {
         # the ~110k extracted files. They are unpacked (and removed) right
         # after the download; the stats step then computes the normalization
         # stats from the extracted corpus.
-        allow_patterns=("dataset/*aloha-agilex*.zip",),
+        allow_patterns=("dataset/*/aloha-agilex*.zip",),
     ),
     "2": Benchmark(
         "RoboDojo",
@@ -160,7 +172,12 @@ def ask_choice(title: str, options: list[str], prompt: str) -> str:
         print(f"  {line}")
     while True:
         answer = ask(prompt)
-        if answer in {str(i) for i in range(1, len(options) + 1)}:
+        # RoboTwin clean-only is intentionally menu item 0, so that it is
+        # easy to distinguish from the full 1-based benchmark entry.
+        valid = {str(i) for i in range(1, len(options) + 1)}
+        if options and options[0].startswith("(0) "):
+            valid.add("0")
+        if answer in valid:
             return answer
         print(red(f"Invalid choice {answer!r} — enter a number between 1 and {len(options)}."))
 
@@ -469,9 +486,9 @@ def _report(path: Path) -> bool:
     return False
 
 
-def _stats_robotwin(target: Path) -> None:
+def _stats_robotwin(target: Path, variants: tuple[str, ...] = ("clean_50", "both")) -> None:
     dataset_dir = target / "dataset"
-    for variant in ("clean_50", "both"):
+    for variant in variants:
         path = dataset_dir / "meta" / f"robotwin_{variant}_normalization_stats.npy"
         if _report(path):
             continue
@@ -601,7 +618,10 @@ def ensure_stats(bench: Benchmark, target: Path) -> None:
     print()
     print(bold(f"Checking normalization stats for {bench.name}"))
     _ensure_openwam_importable()
-    _STATS_STEPS[bench.subdir](target)
+    if bench.subdir == "robotwin2.0":
+        _stats_robotwin(target, bench.stats_variants)
+    else:
+        _STATS_STEPS[bench.subdir](target)
 
 
 def write_config(bench: Benchmark, target: Path) -> None:

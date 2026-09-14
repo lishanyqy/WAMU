@@ -1,0 +1,43 @@
+defaults:
+  - model: dual_system
+  - dataloader: robotwin
+  - _self_
+
+# Video-branch-only training on RoboTwin2.0 clean_50.
+# The action stream remains available as a conditioning input, but its
+# parameters and supervised loss are disabled.
+training:
+  lambda_video: 1.0
+  lambda_action: 0.0
+  batch_size: 8
+  gradient_accumulation_steps: 4
+  mixed_precision: bf16
+  use_gradient_checkpointing: true
+  output_path: outputs/robotwin_clean_video
+  save_steps: 2000
+  keep_last_k_ckpts: 4
+  max_steps: 30000
+
+model:
+  freeze:
+    - action_backbone
+    - video_backbone.text_encoder
+    - video_backbone.reason1
+    - video_backbone.vae
+    - video_backbone.image_encoder
+    - video_backbone.video_encoder
+  architecture:
+    variant: joint_self_attn
+    attention_mask_mode: mutual
+
+dataloader:
+  dataset_dir: ${oc.env:OPEN_WAM_ROBOTWIN_DATA,/path/to/robotwin2.0/dataset}
+  embodiment: aloha-agilex
+  variant: clean_50
+  split: train
+  multiview: true
+
+project:
+  name: openwam-robotwin-clean-video
+  wandb:
+    project: openwam-robotwin
