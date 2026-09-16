@@ -1,6 +1,6 @@
 defaults:
-  - model: dual_system
-  - dataloader: robotwin
+  # Inherit the complete training schema from configs/train.yaml.
+  - train
   - _self_
 
 # Video-branch-only training on RoboTwin2.0 clean_50.
@@ -28,7 +28,7 @@ model:
     - video_backbone.video_encoder
   architecture:
     variant: joint_self_attn
-    attention_mask_mode: mutual
+    attention_mask_mode: action_sees_video
 
 dataloader:
   dataset_dir: ${oc.env:OPEN_WAM_ROBOTWIN_DATA,/path/to/robotwin2.0/dataset}
