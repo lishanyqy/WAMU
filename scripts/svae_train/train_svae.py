@@ -112,6 +112,9 @@ def _init_wandb(cfg: DictConfig, accelerator):
     wandb_cfg = cfg.train.get("wandb", None)
     if wandb_cfg is None:
         return None
+    if not bool(wandb_cfg.get("enabled", True)):
+        logger.info("wandb logging disabled by configuration")
+        return None
     project = wandb_cfg.get("project", None)
     if not project:
         return None

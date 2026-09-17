@@ -204,7 +204,8 @@ uv.lock
 
 # Downloaded checkpoints and benchmark data (populated by scripts/download_assets/)
 assets/
-
+artifacts/
+wamu/
 # Versioned user documentation stored with project assets.
 !assets/
 assets/*

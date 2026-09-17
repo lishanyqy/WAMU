@@ -108,6 +108,18 @@ outputs/robotwin_clean_video/
 
 ## 6. Useful overrides
 
+### Offline cluster mode
+
+集群无法访问外网时，可关闭 W&B 等实验跟踪服务。训练仍会将 checkpoint 和本地日志写入输出目录：
+
+```bash
+torchrun --nproc_per_node=1 scripts/train.py \
+  --config-name train_robotwin_clean_video \
+  project.wandb.enabled=false
+```
+
+也可以直接在配置文件的 `project.wandb` 中设置 `enabled: false`。S-VAE 独立训练对应设置为 `train.wandb.enabled=false`。
+
 Run a short debug test before a full job:
 
 ```bash

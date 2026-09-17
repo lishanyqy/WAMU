@@ -90,6 +90,9 @@ def init_wandb(cfg):
     wandb_cfg = cfg.project.get("wandb", None)
     if wandb_cfg is None:
         return None
+    if not bool(getattr(wandb_cfg, "enabled", True)):
+        logger.info("wandb logging disabled by configuration")
+        return None
     project = getattr(wandb_cfg, "project", None)
     if not project:
         return None

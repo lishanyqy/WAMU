@@ -66,6 +66,7 @@ project:
   output_dir: outputs/${now:%Y-%m-%d_%H-%M-%S}
   seed: 42
   wandb:
+    enabled: true
     project: openwam
     run_name: null
     entity: null

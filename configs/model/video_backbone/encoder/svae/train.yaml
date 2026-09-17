@@ -39,6 +39,7 @@ train:
 
   # wandb (rank-0); project: null disables logging.
   wandb:
+    enabled: true
     project: openwam-svae
     run_name: null
     entity: null
