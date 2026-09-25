@@ -40,5 +40,5 @@ dataloader:
 project:
   name: openwam-robotwin-clean-video
   wandb:
-    enabled: true
+    enabled: false
     project: openwam-robotwin

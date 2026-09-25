@@ -16,6 +16,7 @@ import logging
 from typing import Callable, Optional, Tuple
 
 import torch
+import torch.nn as nn
 from torch import Tensor
 
 from openwam.model.action_backbone.separate_action_dit import ActionDiT
@@ -24,6 +25,7 @@ from openwam.model.architectures.dual_system.mot_driver import DualSystemMoTDriv
 from openwam.model.architectures.registry import register_architecture
 from openwam.model.architectures.utils.common import resolve_bridge_layers
 from openwam.model.architectures.utils.mask_modes import ACTION_SEES_VIDEO
+from openwam.model.action_backbone.components import ActionFiLM
 from openwam.model.compile_options import (
     compile_enabled,
     section_enabled,
@@ -87,6 +89,23 @@ class DualSystemSelfAttnArchitecture(BaseWAMArchitecture):
             shift_action=cfg.get("shift_action"),
         )
 
+        # FiLM works in the shared attention-output space H * head_dim.
+        self.action_film_enabled = bool(cfg.get("action_film", True))
+        self.action_film = None
+        if self.action_film_enabled:
+            film_cond_dim = int(cfg.get("film_cond_dim", action_dim_hidden))
+            # One conditioner per DiT layer: each layer can learn its own
+            # action -> video modulation while keeping identity initialization.
+            self.action_film = nn.ModuleList(
+                [
+                ActionFiLM(
+                    attn_dim=num_heads * attn_head_dim,
+                    cond_dim=film_cond_dim,
+                )
+                    for _ in range(len(bl))
+                ]
+            )
+
         # MoT driver is built once both backbones are available. The video
         # backbone is normally constructed in ``BaseWAMArchitecture._init_video_backbone``
         # (already done by ``super().__init__``), so we can build the driver
@@ -96,6 +115,7 @@ class DualSystemSelfAttnArchitecture(BaseWAMArchitecture):
             "mot_checkpoint_mixed_attn": bool(cfg.get("mot_checkpoint_mixed_attn", True)),
             "attention_mask_mode": str(cfg.get("attention_mask_mode", ACTION_SEES_VIDEO)),
             "video_attention_mask_mode": str(cfg.get("video_attention_mask_mode", "first_frame_causal")),
+            "video_film": self.action_film if self.action_film_enabled else None,
         }
         if self.video_backbone is not None:
             self.build_mot_driver()
@@ -208,6 +228,7 @@ class DualSystemSelfAttnArchitecture(BaseWAMArchitecture):
             **pipeline_inputs,
         )
 
+        # which means video backbone only.
         if noisy_actions is None or ab is None:
             for block_id in range(vb.num_layers):
                 vstate = vb.run_block(block_id, vstate)
@@ -245,7 +266,5 @@ class DualSystemSelfAttnArchitecture(BaseWAMArchitecture):
                 use_gradient_checkpointing=use_gradient_checkpointing,
                 use_gradient_checkpointing_offload=use_gradient_checkpointing_offload,
             )
-        return vb.finalize(vstate), ab.extract_prediction(astate)
-
-
+        return vb.finalize(vstate), ab.x(astate)
 __all__ = ["DualSystemSelfAttnArchitecture"]

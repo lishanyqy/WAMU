@@ -394,3 +394,59 @@ def get_attention_fn() -> Callable:
 
     _ATTENTION_FN = _sdpa
     return _ATTENTION_FN
+
+class ActionFiLM(nn.Module):
+    def __init__(
+        self,
+        attn_dim: int,
+        cond_dim: int,
+    ):
+        super().__init__()
+
+        # Pool over the runtime action sequence so different action horizons
+        # can use the same FiLM module. The input/output width is the shared
+        # attention width, not either backbone's residual hidden dimension.
+        self.action_encoder = nn.Sequential(
+            nn.Linear(attn_dim, cond_dim),
+            nn.SiLU(),
+            nn.Linear(cond_dim, cond_dim),
+        )
+
+        # [B, cond_dim] -> [B, 2 * attn_dim]
+        self.film_head = nn.Linear(cond_dim, 2 * attn_dim)
+
+        # 初始状态为 identity modulation
+        nn.init.zeros_(self.film_head.weight)
+        nn.init.zeros_(self.film_head.bias)
+
+    def forward(self, attn_v, attn_a):
+        """
+        attn_v: [B, Sv, D]
+        attn_a: [B, Sa, D]
+        """
+        if attn_v.ndim != 3 or attn_a.ndim != 3:
+            raise ValueError(
+                f"ActionFiLM expects (B, S, D) tensors, got video={tuple(attn_v.shape)} "
+                f"and action={tuple(attn_a.shape)}"
+            )
+        if attn_v.shape[0] != attn_a.shape[0] or attn_a.shape[-1] != attn_v.shape[-1]:
+            raise ValueError(
+                "ActionFiLM shape mismatch: video/action batch and attention width must match; "
+                f"got video={tuple(attn_v.shape)}, action={tuple(attn_a.shape)}"
+            )
+
+        # [B, Sa, D] -> [B, D] -> [B, Dc]
+        action_condition = attn_a.mean(dim=1)
+        action_condition = self.action_encoder(action_condition)  # [B, Dc]
+
+        gamma_beta = self.film_head(action_condition)              # [B, 2D]
+        gamma, beta = gamma_beta.chunk(2, dim=-1)                  # [B, D]
+
+        # 在 video token 维度广播
+        gamma = gamma.unsqueeze(1)                                # [B, 1, D]
+        beta = beta.unsqueeze(1)                                  # [B, 1, D]
+
+        # FiLM
+        attn_v = (1.0 + gamma) * attn_v + beta                    # [B, Sv, D]
+
+        return attn_v

@@ -60,9 +60,9 @@ training:
 
   # --- Data loading ---
   dataset_num_workers: 8          # DataLoader num_workers (0 = main process)
-
+  
 project:
-  name: openwam
+  name: action_film
   output_dir: outputs/${now:%Y-%m-%d_%H-%M-%S}
   seed: 42
   wandb:

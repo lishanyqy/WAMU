@@ -37,6 +37,8 @@ def main() -> None:
     p.add_argument("--batch-size", type=int, default=8)
     p.add_argument("--num-frames", type=int, default=33)
     p.add_argument("--frame-stride", type=int, default=4)
+    p.add_argument("--downstream", action="store_true")
+    p.add_argument("--keep-frames", action="store_true", help="save per-frame CLS features with shape (frames,layers,dim)")
     args = p.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     if args.device.startswith("cuda"):
@@ -63,9 +65,21 @@ def main() -> None:
                 inputs = processor(images=frames[start:start + args.batch_size], return_tensors="pt")
                 inputs = {k: v.to(device) for k, v in inputs.items()}
                 hidden = model(**inputs, output_hidden_states=True).hidden_states
-                feats.append(torch.stack([h[:, 0] for h in hidden]).transpose(0, 1).cpu().to(torch.float16).numpy())
-        feat = np.concatenate(feats, axis=0).mean(axis=0)
-        np.savez_compressed(out, features=feat.astype(np.float16), task=row["task"], episode=row["episode"], model=args.model, dtype=str(dtype), num_frames=args.num_frames, frame_stride=args.frame_stride)
+                if args.downstream:
+                    feats.append(hidden[-1].cpu().to(torch.float16).numpy())
+                elif args.keep_frames:
+                    feats.append(torch.stack([h[:, 0] for h in hidden]).transpose(0, 1).cpu().to(torch.float16).numpy())
+                else:
+                    feats.append(torch.stack([h[:, 0] for h in hidden]).transpose(0, 1).cpu().to(torch.float16).numpy())
+        if args.downstream:
+            tok = np.concatenate(feats, axis=0)
+            np.savez_compressed(out, tokens=tok[:, 1:], cls=tok[:, 0], task=row["task"], episode=row["episode"], model=args.model, dtype=str(dtype), num_frames=args.num_frames, frame_stride=args.frame_stride, layer=len(hidden)-1)
+        elif args.keep_frames:
+            feat = np.concatenate(feats, axis=0)
+            np.savez_compressed(out, features=feat.astype(np.float16), task=row["task"], episode=row["episode"], model=args.model, dtype=str(dtype), num_frames=args.num_frames, frame_stride=args.frame_stride)
+        else:
+            feat = np.concatenate(feats, axis=0).mean(axis=0)
+            np.savez_compressed(out, features=feat.astype(np.float16), task=row["task"], episode=row["episode"], model=args.model, dtype=str(dtype), num_frames=args.num_frames, frame_stride=args.frame_stride)
         done += 1
         if done % 10 == 0:
             print(f"progress={done}/{len(rows)}", flush=True)

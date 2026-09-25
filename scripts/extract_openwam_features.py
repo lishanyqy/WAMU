@@ -6,7 +6,7 @@ import cv2, numpy as np, torch
 from PIL import Image
 from omegaconf import OmegaConf
 
-def frames(path, n=33):
+def frames(path, n=33, stride=4):
     cap=cv2.VideoCapture(path); xs=[]
     while len(xs)<132:
         ok,b=cap.read()
@@ -14,7 +14,8 @@ def frames(path, n=33):
         xs.append(cv2.cvtColor(b,cv2.COLOR_BGR2RGB))
     cap.release()
     if not xs: raise RuntimeError(path)
-    ids=np.linspace(0,len(xs)-1,n,dtype=np.int64)
+    ids=np.arange(n,dtype=np.int64)*stride
+    if ids[-1] >= len(xs): ids=np.linspace(0,len(xs)-1,n,dtype=np.int64)
     return np.stack([cv2.resize(xs[int(i)],(320,384),interpolation=cv2.INTER_AREA) for i in ids])
 
 def main():
@@ -29,7 +30,7 @@ def main():
     for i,row in enumerate(rows,1):
         out=args.output/f"{row['task']}__{row['episode']}.npz"
         if out.exists(): continue
-        rgb=frames(row['video']); pil=[Image.fromarray(x) for x in rgb]
+        rgb=frames(row['video'], row.get('num_frames', 33), row.get('frame_stride', 4)); pil=[Image.fromarray(x) for x in rgb]
         with torch.inference_mode(), torch.autocast('cuda',dtype=dtype):
             inputs=vb.preprocess_input_for_train(frames=[pil],text=['A video of a robot manipulating objects'])
             clean=inputs.pop('input_latents'); noise=torch.randn_like(clean); t=torch.full((1,),500.0,device=clean.device,dtype=clean.dtype); inputs['latents']=0.5*clean+0.5*noise; inputs['timestep']=t

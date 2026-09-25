@@ -30,6 +30,11 @@ architecture:
   # Video<->video visibility: first_frame_causal | per_frame_causal | bidirectional
   video_attention_mask_mode: first_frame_causal
 
+  # Action-conditioned FiLM on each video's mixed-attention output.
+  # true = action tokens modulate video attention; false = standard MoT output.
+  action_film: true
+  film_cond_dim: 1024
+
   # ActionDiT layer selection: explicit list, or null + bridge_interval (1 = every layer, 2 = every other).
   # joint_cross_attn: which video layers feed the bridge; joint_self_attn/idm: sizes ActionDiT.
   bridge_layers: null

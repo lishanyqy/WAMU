@@ -13,7 +13,7 @@ The driver owns no parameters — a plain Python class, absent from ``state_dict
 from __future__ import annotations
 
 import copy
-from typing import TYPE_CHECKING, Optional, Tuple
+from typing import TYPE_CHECKING, Callable, Optional, Tuple
 
 import torch
 import torch.nn.functional as F
@@ -65,6 +65,7 @@ class DualSystemMoTDriver:
         mot_checkpoint_mixed_attn: bool = True,
         attention_mask_mode: str = ACTION_SEES_VIDEO,
         video_attention_mask_mode: Optional[str] = None,
+        video_film: Optional[Callable[[Tensor, Tensor], Tensor]] = None,
     ) -> None:
         if vb.num_layers != ab.num_layers:
             raise ValueError(
@@ -90,6 +91,7 @@ class DualSystemMoTDriver:
         self.head_dim = vb.head_dim
         self.mot_checkpoint_mixed_attn = bool(mot_checkpoint_mixed_attn)
         self.attention_mask_mode = attention_mask_mode
+        self.video_film = video_film
 
         # Allow the architecture / config to override the video v↔v sub-mode.
         # When None we defer to whatever ``vb.video_attention_mask_mode`` reports.
@@ -245,6 +247,13 @@ class DualSystemMoTDriver:
             mixed = self._mixed_attention(q_cat, k_cat, v_cat, attn_mask)
 
         attn_v, attn_a = mixed.split([s_video, s_action], dim=1)
+
+        if self.video_film is not None:
+            film = self.video_film
+            if isinstance(film, torch.nn.ModuleList):
+                film = film[layer_id]
+            attn_v = film(attn_v, attn_a)
+
         vstate = vb.post_attn_at_layer(layer_id, vstate, attn_v.contiguous(), vpost)
         astate = ab.post_attn_at_layer(layer_id, astate, attn_a.contiguous(), apost)
         return vstate, astate

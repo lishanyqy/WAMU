@@ -87,6 +87,9 @@ def fill_cross_modal_va_blocks(
         mask[v_start:v_end, a_start:a_end] = False
 
 
+# def build_cross_modal_attention_mask_action_film():
+    
+
 def build_cross_modal_attention_mask(
     video_backbone,
     *,

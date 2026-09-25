@@ -80,16 +80,27 @@ class Benchmark:
 
 
 BENCHMARKS: dict[str, Benchmark] = {
+    "9": Benchmark(
+        "RoboTwin2.0-frank_clean_50",
+        "TianxingChen/RoboTwin2.0",
+        "robotwin2.0",
+        approx_gb=25.0,
+        config="robotwin.yaml",
+        dataset_subpath="dataset",
+        # Only the clean_50 archives are needed for the clean-video run.
+        allow_patterns=("dataset/*/frank_clean_50.zip",),
+        stats_variants=("clean_50_frank",),
+    ),
     "0": Benchmark(
-            "RoboTwin2.0-clean_50",
-            "TianxingChen/RoboTwin2.0",
-            "robotwin2.0",
-            approx_gb=25.0,
-            config="robotwin.yaml",
-            dataset_subpath="dataset",
-            # Only the clean_50 archives are needed for the clean-video run.
-            allow_patterns=("dataset/*/aloha-agilex_clean_50.zip",),
-            stats_variants=("clean_50",),
+        "RoboTwin2.0-clean_50",
+        "TianxingChen/RoboTwin2.0",
+        "robotwin2.0",
+        approx_gb=25.0,
+        config="robotwin.yaml",
+        dataset_subpath="dataset",
+        # Only the clean_50 archives are needed for the clean-video run.
+        allow_patterns=("dataset/*/aloha-agilex_clean_50.zip",),
+        stats_variants=("clean_50",),
     ),
     "1": Benchmark(
         "RoboTwin2.0",
