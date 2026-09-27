@@ -266,5 +266,5 @@ class DualSystemSelfAttnArchitecture(BaseWAMArchitecture):
                 use_gradient_checkpointing=use_gradient_checkpointing,
                 use_gradient_checkpointing_offload=use_gradient_checkpointing_offload,
             )
-        return vb.finalize(vstate), ab.x(astate)
+        return vb.finalize(vstate), ab.extract_prediction(astate)
 __all__ = ["DualSystemSelfAttnArchitecture"]
