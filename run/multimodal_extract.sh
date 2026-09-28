@@ -4,7 +4,7 @@ cd "$(dirname "$0")/.."
 source /gpfs/apps/icl/software/Anaconda3/2023.03/etc/profile.d/conda.sh
 module purge
 module load CUDAcompat/12.2-535.161.08
-
+module load CUDA/12.2.2
 # dino extraction
 # conda activate fastwam
 # python scripts/extract_robotwin_dinov2.py \
@@ -30,33 +30,33 @@ echo "workspace=$(pwd)"
 echo "cuda=$(python -c 'import os; print(os.environ.get("CUDA_HOME", ""))' 2>/dev/null || true)"
 
 # # depth extraction
-conda activate depthanything
-export PYTHONPATH=/home/a1905721/workspace/Depth-Anything-3/src:${PYTHONPATH:-}
-python -c 'import torch; print("depthanything torch", torch.__version__, torch.version.cuda, torch.cuda.is_available())'
-# conda activate openwam
-# conda activate 
-python scripts/extract_robotwin_depth_features.py \
-  --manifest artifacts/agilex_robotwin10s_manifest.jsonl \
-  --model-dir /home/a1905721/modelspace/depthanything/ \
-  --output artifacts/agilex_temporal_features/depthv3 \
-  --device cuda \
-  --frames 33 \
-  --keep-frames
+# conda activate depthanything
+# export PYTHONPATH=/home/a1905721/workspace/Depth-Anything-3/src:${PYTHONPATH:-}
+# python -c 'import torch; print("depthanything torch", torch.__version__, torch.version.cuda, torch.cuda.is_available())'
+# # conda activate openwam
+# # conda activate 
+# python scripts/extract_robotwin_depth_features.py \
+#   --manifest artifacts/agilex_robotwin10s_manifest.jsonl \
+#   --model-dir /home/a1905721/modelspace/depthanything/ \
+#   --output artifacts/agilex_temporal_features/depthv3 \
+#   --device cuda \
+#   --frames 33 \
+#   --keep-frames
 
-python scripts/extract_robotwin_depth_features.py \
-  --manifest artifacts/franka_robotwin10s_manifest.jsonl \
-  --model-dir /home/a1905721/modelspace/depthanything/ \
-  --output artifacts/franka_temporal_features/depthv3 \
-  --device cuda \
-  --frames 33 \
-  --keep-frames
+# python scripts/extract_robotwin_depth_features.py \
+#   --manifest artifacts/franka_robotwin10s_manifest.jsonl \
+#   --model-dir /home/a1905721/modelspace/depthanything/ \
+#   --output artifacts/franka_temporal_features/depthv3 \
+#   --device cuda \
+#   --frames 33 \
+#   --keep-frames
 
 
 # VideoMAEv2
 conda activate videomae
 python scripts/extract_robotwin_videomaev2_features.py \
   --manifest artifacts/agilex_robotwin10s_manifest.jsonl \
-  --model ~/modelspace/VideoMAEv2 \
+  --model ~/modelspace/VideoMAEv2-Large \
   --output artifacts/agilex_temporal_features/videomaev2 \
   --device cuda:0 \
   --frames 16 \
