@@ -206,6 +206,7 @@ uv.lock
 assets/
 artifacts/
 wamu/
+hf_staging/
 # Versioned user documentation stored with project assets.
 !assets/
 assets/*

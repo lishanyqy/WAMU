@@ -25,7 +25,8 @@ from openwam.model.architectures.dual_system.mot_driver import DualSystemMoTDriv
 from openwam.model.architectures.registry import register_architecture
 from openwam.model.architectures.utils.common import resolve_bridge_layers
 from openwam.model.architectures.utils.mask_modes import ACTION_SEES_VIDEO
-from openwam.model.action_backbone.components import ActionFiLM
+from openwam.model.action_backbone.components import ActionFiLM, LegacyActionFiLM
+from openwam.model.action_backbone.film import ConcatActionFiLM
 from openwam.model.compile_options import (
     compile_enabled,
     section_enabled,
@@ -94,17 +95,37 @@ class DualSystemSelfAttnArchitecture(BaseWAMArchitecture):
         self.action_film = None
         if self.action_film_enabled:
             film_cond_dim = int(cfg.get("film_cond_dim", action_dim_hidden))
+            # Checkpoints trained before ``film_type`` existed have no such key
+            # in their saved config.yaml; they used the attn_a-conditioned FiLM.
+            film_type = str(cfg.get("film_type", "mean_legacy"))
+            attn_dim = num_heads * attn_head_dim
+            if film_type == "mean_legacy":
+                def make_film():
+                    return LegacyActionFiLM(attn_dim=attn_dim, cond_dim=film_cond_dim)
+            elif film_type == "mean":
+                def make_film():
+                    return ActionFiLM(attn_dim=attn_dim, action_dim=action_dim_hidden, cond_dim=film_cond_dim)
+            elif film_type == "concat":
+                num_action_tokens = cfg.get("film_num_action_tokens")
+                if num_action_tokens is None:
+                    raise ValueError(
+                        "film_type='concat' requires film_num_action_tokens (= action horizon, "
+                        "e.g. dataloader num_frames - 1)."
+                    )
+
+                def make_film():
+                    return ConcatActionFiLM(
+                        attn_dim=attn_dim,
+                        action_dim=action_dim_hidden,
+                        cond_dim=film_cond_dim,
+                        num_action_tokens=int(num_action_tokens),
+                        token_reduction=int(cfg.get("film_token_reduction", 8)),
+                    )
+            else:
+                raise ValueError(f"Unknown film_type {film_type!r}; expected 'mean', 'concat' or 'mean_legacy'.")
             # One conditioner per DiT layer: each layer can learn its own
             # action -> video modulation while keeping identity initialization.
-            self.action_film = nn.ModuleList(
-                [
-                ActionFiLM(
-                    attn_dim=num_heads * attn_head_dim,
-                    cond_dim=film_cond_dim,
-                )
-                    for _ in range(len(bl))
-                ]
-            )
+            self.action_film = nn.ModuleList([make_film() for _ in range(len(bl))])
 
         # MoT driver is built once both backbones are available. The video
         # backbone is normally constructed in ``BaseWAMArchitecture._init_video_backbone``

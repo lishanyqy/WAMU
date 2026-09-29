@@ -215,6 +215,9 @@ class DualSystemMoTDriver:
         """
         vb = self.vb
         ab = self.ab
+        # Action tokens entering this layer: the FiLM condition for the video
+        # attention output.
+        x_action_in = astate.payload.x_action
 
         q_v, k_v, v_v, vpost = vb.pre_attn_at_layer(layer_id, vstate)
         q_a, k_a, v_a, apost = ab.pre_attn_at_layer(layer_id, astate)
@@ -252,7 +255,8 @@ class DualSystemMoTDriver:
             film = self.video_film
             if isinstance(film, torch.nn.ModuleList):
                 film = film[layer_id]
-            attn_v = film(attn_v, attn_a)
+            film_cond = attn_a if getattr(film, "cond_on_attn_output", False) else x_action_in
+            attn_v = film(attn_v, film_cond)
 
         vstate = vb.post_attn_at_layer(layer_id, vstate, attn_v.contiguous(), vpost)
         astate = ab.post_attn_at_layer(layer_id, astate, attn_a.contiguous(), apost)

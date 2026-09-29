@@ -396,18 +396,32 @@ def get_attention_fn() -> Callable:
     return _ATTENTION_FN
 
 class ActionFiLM(nn.Module):
+    """FiLM conditioner driven by the mean-pooled pre-attention action tokens.
+
+    The condition is the ActionDiT residual stream entering the layer
+    (``x_action``, width ``action_dim``); it modulates the video
+    mixed-attention output (width ``attn_dim``). Mean pooling keeps the module
+    independent of the action horizon.
+    """
+
     def __init__(
         self,
         attn_dim: int,
+        action_dim: int,
         cond_dim: int,
     ):
         super().__init__()
 
-        # Pool over the runtime action sequence so different action horizons
-        # can use the same FiLM module. The input/output width is the shared
-        # attention width, not either backbone's residual hidden dimension.
+        self.attn_dim = int(attn_dim)
+        self.action_dim = int(action_dim)
+
+        # The residual stream is un-normalized and its scale drifts across
+        # layers; normalize before pooling.
+        self.action_norm = nn.LayerNorm(action_dim, elementwise_affine=False)
+
+        # [B, Da] -> [B, cond_dim]
         self.action_encoder = nn.Sequential(
-            nn.Linear(attn_dim, cond_dim),
+            nn.Linear(action_dim, cond_dim),
             nn.SiLU(),
             nn.Linear(cond_dim, cond_dim),
         )
@@ -419,25 +433,30 @@ class ActionFiLM(nn.Module):
         nn.init.zeros_(self.film_head.weight)
         nn.init.zeros_(self.film_head.bias)
 
-    def forward(self, attn_v, attn_a):
+    def forward(self, attn_v, x_action):
         """
-        attn_v: [B, Sv, D]
-        attn_a: [B, Sa, D]
+        attn_v:   [B, Sv, attn_dim]    video mixed-attention output
+        x_action: [B, Sa, action_dim]  action tokens entering this layer (pre-attention)
         """
-        if attn_v.ndim != 3 or attn_a.ndim != 3:
+        if attn_v.ndim != 3 or x_action.ndim != 3:
             raise ValueError(
                 f"ActionFiLM expects (B, S, D) tensors, got video={tuple(attn_v.shape)} "
-                f"and action={tuple(attn_a.shape)}"
+                f"and action={tuple(x_action.shape)}"
             )
-        if attn_v.shape[0] != attn_a.shape[0] or attn_a.shape[-1] != attn_v.shape[-1]:
+        if (
+            attn_v.shape[0] != x_action.shape[0]
+            or attn_v.shape[-1] != self.attn_dim
+            or x_action.shape[-1] != self.action_dim
+        ):
             raise ValueError(
-                "ActionFiLM shape mismatch: video/action batch and attention width must match; "
-                f"got video={tuple(attn_v.shape)}, action={tuple(attn_a.shape)}"
+                "ActionFiLM shape mismatch: expected video (B, Sv, "
+                f"{self.attn_dim}) and action (B, Sa, {self.action_dim}); "
+                f"got video={tuple(attn_v.shape)}, action={tuple(x_action.shape)}"
             )
 
-        # [B, Sa, D] -> [B, D] -> [B, Dc]
-        action_condition = attn_a.mean(dim=1)
-        action_condition = self.action_encoder(action_condition)  # [B, Dc]
+        # [B, Sa, Da] -> [B, Da] -> [B, Dc]
+        action_condition = self.action_norm(x_action).mean(dim=1)
+        action_condition = self.action_encoder(action_condition)
 
         gamma_beta = self.film_head(action_condition)              # [B, 2D]
         gamma, beta = gamma_beta.chunk(2, dim=-1)                  # [B, D]
@@ -450,3 +469,51 @@ class ActionFiLM(nn.Module):
         attn_v = (1.0 + gamma) * attn_v + beta                    # [B, Sv, D]
 
         return attn_v
+
+
+class LegacyActionFiLM(nn.Module):
+    """Pre-refactor mean-pool FiLM, kept only to load old checkpoints.
+
+    Conditions on the action mixed-attention output ``attn_a`` (width
+    ``attn_dim``) instead of the pre-attention action stream. Parameter names
+    and shapes match the original ``ActionFiLM`` exactly.
+    """
+
+    # Tells the MoT driver to pass attn_a instead of the pre-attention x_action.
+    cond_on_attn_output = True
+
+    def __init__(
+        self,
+        attn_dim: int,
+        cond_dim: int,
+    ):
+        super().__init__()
+
+        self.action_encoder = nn.Sequential(
+            nn.Linear(attn_dim, cond_dim),
+            nn.SiLU(),
+            nn.Linear(cond_dim, cond_dim),
+        )
+        self.film_head = nn.Linear(cond_dim, 2 * attn_dim)
+        nn.init.zeros_(self.film_head.weight)
+        nn.init.zeros_(self.film_head.bias)
+
+    def forward(self, attn_v, attn_a):
+        """
+        attn_v: [B, Sv, D]
+        attn_a: [B, Sa, D]
+        """
+        if attn_v.ndim != 3 or attn_a.ndim != 3:
+            raise ValueError(
+                f"LegacyActionFiLM expects (B, S, D) tensors, got video={tuple(attn_v.shape)} "
+                f"and action={tuple(attn_a.shape)}"
+            )
+        if attn_v.shape[0] != attn_a.shape[0] or attn_a.shape[-1] != attn_v.shape[-1]:
+            raise ValueError(
+                "LegacyActionFiLM shape mismatch: video/action batch and attention width must match; "
+                f"got video={tuple(attn_v.shape)}, action={tuple(attn_a.shape)}"
+            )
+
+        action_condition = self.action_encoder(attn_a.mean(dim=1))  # [B, Dc]
+        gamma, beta = self.film_head(action_condition).chunk(2, dim=-1)
+        return (1.0 + gamma.unsqueeze(1)) * attn_v + beta.unsqueeze(1)

@@ -33,7 +33,14 @@ architecture:
   # Action-conditioned FiLM on each video's mixed-attention output.
   # true = action tokens modulate video attention; false = standard MoT output.
   action_film: true
-  film_cond_dim: 1024
+  film_cond_dim: 2048
+  # Both types condition on the pre-attn action tokens (ActionDiT dim) and modulate the video attention output.
+  # mean   = mean-pool action tokens -> MLP (ActionFiLM, horizon-agnostic)
+  # concat = per-token Linear(Da -> Da // film_token_reduction), concat -> MLP (ConcatActionFiLM)
+  # mean_legacy = old attn_a-conditioned mean FiLM, only for loading pre-film_type checkpoints (also the default when the key is absent)
+  film_type: mean
+  film_token_reduction: 8          # concat only
+  film_num_action_tokens: null     # concat only; must equal action horizon (dataloader num_frames - 1)
 
   # ActionDiT layer selection: explicit list, or null + bridge_interval (1 = every layer, 2 = every other).
   # joint_cross_attn: which video layers feed the bridge; joint_self_attn/idm: sizes ActionDiT.

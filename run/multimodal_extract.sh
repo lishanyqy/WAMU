@@ -54,20 +54,20 @@ echo "cuda=$(python -c 'import os; print(os.environ.get("CUDA_HOME", ""))' 2>/de
 
 # VideoMAEv2
 conda activate videomae
-python scripts/extract_robotwin_videomaev2_features.py \
-  --manifest artifacts/agilex_robotwin10s_manifest.jsonl \
-  --model ~/modelspace/VideoMAEv2-Large \
-  --output artifacts/agilex_temporal_features/videomaev2 \
-  --device cuda:0 \
-  --frames 16 \
-  --source-frames 33 \
-  --stride 4 \
-  --keep-frames
+# python scripts/extract_robotwin_videomaev2_features.py \
+#   --manifest artifacts/agilex_robotwin10s_manifest.jsonl \
+#   --model ~/modelspace/VideoMAEv2-Large \
+#   --output artifacts/agilex_temporal_features/videomaev2 \
+#   --device cuda:0 \
+#   --frames 16 \
+#   --source-frames 33 \
+#   --stride 4 \
+#   --keep-frames
 
 
 python scripts/extract_robotwin_videomaev2_features.py \
   --manifest artifacts/franka_robotwin10s_manifest.jsonl \
-  --model ~/modelspace/VideoMAEv2-large/ \
+  --model ~/modelspace/VideoMAEv2-Large/ \
   --output artifacts/franka_temporal_features/videomaev2 \
   --device cuda:0 \
   --frames 16 \
