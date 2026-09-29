@@ -8,7 +8,8 @@ model:
     attention_mask_mode: action_sees_video
     video_attention_mask_mode: first_frame_causal
     action_film: true
-    film_cond_dim: 1024
+    film_cond_dim: 3072
+    film_type: mean
 
 training:
   # --- Debug ---
