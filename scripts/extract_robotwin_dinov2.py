@@ -4,28 +4,16 @@ from __future__ import annotations
 import argparse, json, os
 from pathlib import Path
 
-import av
 import numpy as np
 import torch
 from PIL import Image
 from transformers import AutoImageProcessor, AutoModel
 
+from robotwin_gt_frames import load_row_frames
 
-def read_frames(path: str, n: int, stride: int) -> list[Image.Image]:
-    with av.open(path, options={"hwaccel": "none"}) as c:
-        stream = c.streams.video[0]
-        total = int(stream.frames or 0)
-        indices = np.linspace(0, max(0, total - 1), n, dtype=np.int64) if total <= n * stride else np.arange(n) * stride
-        wanted = set(int(x) for x in indices)
-        out = {}
-        for i, frame in enumerate(c.decode(stream)):
-            if i in wanted:
-                out[i] = frame.to_image().convert("RGB")
-            if i > max(wanted):
-                break
-        if len(out) < n:
-            raise RuntimeError(f"decoded {len(out)}/{n} frames from {path}")
-        return [out[int(i)] for i in indices]
+
+def read_frames(row: dict, n: int, stride: int) -> list[Image.Image]:
+    return load_row_frames(row, n, stride)[1]
 
 
 def main() -> None:
@@ -58,7 +46,7 @@ def main() -> None:
         if out.exists():
             done += 1
             continue
-        frames = read_frames(row["video"], args.num_frames, args.frame_stride)
+        frames = read_frames(row, args.num_frames, args.frame_stride)
         feats = []
         with torch.inference_mode():
             for start in range(0, len(frames), args.batch_size):

@@ -4,17 +4,11 @@ import argparse,json
 from pathlib import Path
 import cv2,numpy as np,torch,sys
 
-def read_frames(path,n=33,stride=4):
-    cap=cv2.VideoCapture(path); frames=[]
-    while len(frames)<132:
-        ok,b=cap.read()
-        if not ok: break
-        frames.append(cv2.cvtColor(b,cv2.COLOR_BGR2RGB))
-    cap.release()
-    if not frames: raise RuntimeError(path)
-    ids=np.arange(n,dtype=np.int64)*stride
-    if ids[-1] >= len(frames): ids=np.linspace(0,len(frames)-1,n,dtype=np.int64)
-    return [frames[int(i)] for i in ids]
+sys.path.insert(0,str(Path(__file__).resolve().parent))
+from robotwin_gt_frames import load_row_frames
+
+def read_frames(row,n=33,stride=4):
+    return [np.asarray(x) for x in load_row_frames(row,n,stride)[1]]
 
 def main():
     p=argparse.ArgumentParser(); p.add_argument('--manifest',type=Path,required=True); p.add_argument('--model-dir',type=Path,required=True); p.add_argument('--output',type=Path,required=True); p.add_argument('--device',default='cuda'); p.add_argument('--frames',type=int,default=33); p.add_argument('--keep-frames',action='store_true'); a=p.parse_args()
@@ -25,7 +19,7 @@ def main():
     for i,row in enumerate(rows,1):
         out=a.output/f"{row['task']}__{row['episode']}.npz"
         if out.exists(): continue
-        with torch.inference_mode(): pred=model.inference(read_frames(row['video'],a.frames,row.get('frame_stride',4)),export_format='mini_npz')
+        with torch.inference_mode(): pred=model.inference(read_frames(row,a.frames,row.get('frame_stride',4)),export_format='mini_npz')
         d=np.asarray(pred.depth,dtype=np.float32); d=np.nan_to_num(d,nan=0,posinf=0,neginf=0)
         # Preserve coarse spatial geometry: temporal mean of 16x16 normalized depth maps.
         x=np.stack([cv2.resize(z,(16,16),interpolation=cv2.INTER_AREA) for z in d])

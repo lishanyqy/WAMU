@@ -3,7 +3,7 @@ openwam_variant=robotwin_dual_system_joint_self_attention_mutual
 openwam_ckpt=/home/a1905721/modelspace/${openwam_variant}
 
 openwam_variant2=robotwin_dual_system_idm
-openwam_ckpt2=/home/a1905721/modelspace/${openwam_variant}
+openwam_ckpt2=/home/a1905721/modelspace/${openwam_variant2}
 
 # source ~/.bashrc
 # module load CUDAcompat/12.2-535.161.08
