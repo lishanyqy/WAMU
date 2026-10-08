@@ -32,12 +32,13 @@ def main():
         dd = Path(f'artifacts/{emb}_features_gt/da3_depth')
         gt = np.load(f'artifacts/downstream/gt/{emb}.npz')
         pos = {str(k): i for i, k in enumerate(gt['keys'])}
+        gt_depth = gt['depth']                       # load once: indexing the NpzFile re-reads the whole array every time
         if all((dd / f'{k}.npz').exists() for k in test):
             # DA3 predicts scale-free depth: align each frame to the GT (a) by one median scale, (b) by least-squares scale + shift
             # (the MiDaS / Depth Anything protocol for relative depth, here in depth space); pairwise ordinal accuracy needs no alignment
             acc = {k: [] for k in ('absrel_s', 'delta1_s', 'absrel_a', 'delta1_a', 'pair')}
             for k in test:
-                z = np.load(dd / f'{k}.npz'); pred = z['pred'].astype(np.float32); g = gt['depth'][pos[k]][1:9].astype(np.float32)
+                z = np.load(dd / f'{k}.npz'); pred = z['pred'].astype(np.float32); g = gt_depth[pos[k]][1:9].astype(np.float32)
                 acc['pair'].append(z['zs_pairwise'])
                 for j in range(8):
                     p_, g_ = pred[j].ravel(), g[j].ravel(); v = np.isfinite(g_) & (g_ > 0) & np.isfinite(p_) & (p_ > 0)

@@ -151,12 +151,19 @@ def _stacked_ref(path_of, keys, member, layer_axis, layers):
     """{layer: (N, 8, h, w, D)} from per-episode npz files whose `member` is (L, 8, h, w, D) (or (8, h, w, D) when layer_axis is None)."""
     out = {}
     for i, k in enumerate(keys):
-        z = npz_member_memmap(path_of(k), member)
+        path = path_of(k)
+        z = npz_member_memmap(path, member)
         for l in layers:
-            x = np.asarray(z[l] if layer_axis is not None else z)
+            # one contiguous read per slice (NFS: page-faulting through the memmap is ~10x slower than a sequential read)
+            sub = z[l] if layer_axis is not None else z
+            with open(path, 'rb') as fh:
+                fh.seek(z.offset + (l * z.strides[0] if layer_axis is not None else 0))
+                x = np.frombuffer(fh.read(sub.nbytes), dtype=z.dtype).reshape(sub.shape)
             if l not in out:
                 out[l] = np.empty((len(keys),) + x.shape, np.float16)
             out[l][i] = x
+        if (i + 1) % 500 == 0:
+            log(f'  read {member} layers {layers}: {i + 1}/{len(keys)}')
     return out
 
 

@@ -35,7 +35,7 @@ conda activate openwam
 # export your robotwin data env
 export OPEN_WAM_ROBOTWIN_DATA=/path/to/robotwin2.0/dataset
 torchrun --nproc_per_node=4 scripts/train.py \
-  --config-name train_robotwin_clean_cross_attn.yaml.yaml \
+  --config-name train_robotwin_clean_cross_attn.yaml \
   model.video_backbone.model_path=assets/video_backbone_ckpt/Wan2.2-TI2V-5B \
-  training.output_path=/scratch/ou29/rz6525/WAMU/WAMU/outputs/concat_action_film \
+  training.output_path=/scratch/ou29/rz6525/WAMU/WAMU/outputs/cross_attn_clean \
 ```
