@@ -129,8 +129,8 @@ def d4rt_frames(emb, keys):
 
 def videomae_frames_tokens(frames, layers):
     from probe_task_cls_layers import videomae_layer_group
-    flat = videomae_layer_group(frames, layers)                                                # (N, 3136, 1024) = 16 tubelets x 196
-    return {l: v.reshape(len(frames), 16, 196, -1)[:, 1::2] for l, v in flat.items()}
+    flat = videomae_layer_group(frames, layers, keep_tubelets=np.arange(1, 16, 2))                # (N, 8 x 196, 1024): only the 8 tubelets ending at probe frames
+    return {l: v.reshape(len(frames), 8, 196, -1) for l, v in flat.items()}
 
 
 def dinov2_frames_tokens(emb, keys, layers, device):

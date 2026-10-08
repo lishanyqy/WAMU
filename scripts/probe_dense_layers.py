@@ -30,6 +30,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from downstream_data import npz_member_memmap
 from probe_task_cls_layers import Keys, log, openwam_layer_group, split_keys
 
 GT_DIR = Path('artifacts/downstream/gt')
@@ -146,6 +147,38 @@ def videomae_dense(frames, layers):
     return {l: v.reshape(len(frames), 16, 14, 14, -1)[:, TUBELETS] for l, v in flat.items()}
 
 
+def _stacked_ref(path_of, keys, member, layer_axis, layers):
+    """{layer: (N, 8, h, w, D)} from per-episode npz files whose `member` is (L, 8, h, w, D) (or (8, h, w, D) when layer_axis is None)."""
+    out = {}
+    for i, k in enumerate(keys):
+        z = npz_member_memmap(path_of(k), member)
+        for l in layers:
+            x = np.asarray(z[l] if layer_axis is not None else z)
+            if l not in out:
+                out[l] = np.empty((len(keys),) + x.shape, np.float16)
+            out[l][i] = x
+    return out
+
+
+def sam_dense(embodiment, keys, layers):
+    """SAM ViT-H tokens (scripts/extract_robotwin_sam_features.py): layers 0-3 = encoder blocks 8/16/24/32 (1280-d),
+    layer 4 = the 256-d neck image embedding; all 16 x 16."""
+    src = Path(f'artifacts/{embodiment}_features_gt/sam')
+    out = {}
+    vit = [l for l in layers if l < 4]
+    if vit:
+        out.update(_stacked_ref(lambda k: src / f'{k}.npz', keys, 'vit', 0, vit))
+    if 4 in layers:
+        out[4] = _stacked_ref(lambda k: src / f'{k}.npz', keys, 'neck', None, [4])[4]
+    return out
+
+
+def da3_dense(embodiment, keys, layers):
+    """Depth Anything 3 backbone tokens (scripts/extract_robotwin_da3_features.py): layers 0-4 = ViT-B blocks 3/5/7/9/11, 12 x 16 x 768."""
+    src = Path(f'artifacts/{embodiment}_features_gt/da3')
+    return _stacked_ref(lambda k: src / f'{k}.npz', keys, 'features', 0, layers)
+
+
 _DINO = {}
 
 
@@ -183,7 +216,7 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument('--embodiment', required=True, choices=['agilex', 'franka'])
     p.add_argument('--models', nargs='*', default=None, help='OpenWAM models (default: all with every split episode extracted)')
-    p.add_argument('--refs', nargs='*', default=[], choices=['d4rt', 'videomaev2', 'dinov2'])
+    p.add_argument('--refs', nargs='*', default=[], choices=['d4rt', 'videomaev2', 'dinov2', 'sam', 'da3'])
     p.add_argument('--layers', type=int, nargs='*', default=None)
     p.add_argument('--group', type=int, default=5)
     p.add_argument('--tasks', nargs='*', default=['depth', 'segmentation'])
@@ -262,6 +295,12 @@ def main():
                 xs = dinov2_dense(a.embodiment, keys, ls[g:g + a.group], a.device)
                 for l in ls[g:g + a.group]:
                     run('dinov2', 'reference', l, xs[l])
+                del xs
+        elif ref in ('sam', 'da3'):
+            ls = todo(ref, 5)
+            for l in ls:
+                xs = (sam_dense if ref == 'sam' else da3_dense)(a.embodiment, keys, [l])
+                run(ref, 'reference', l, xs[l])
                 del xs
 
     from downstream_data import OPENWAM_ROOT

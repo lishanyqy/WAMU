@@ -17,25 +17,41 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 CLS = ROOT / 'artifacts/downstream/task_cls_layers_ep10'
 DENSE = ROOT / 'artifacts/downstream/dense_layers_ep60'
+FLOW = ROOT / 'artifacts/downstream/flow_layers_ep60'
 TEMPLATE = ROOT / 'reports/probe_report_template.html'
 OUT = ROOT / 'reports/openwam_gt_rebuild.html'
-N_LAYERS = {'videomaev2': 24, 'dinov2': 25, 'd4rt': 1}
+N_LAYERS = {'videomaev2': 24, 'dinov2': 25, 'd4rt': 1,
+            'sam': 5, 'da3': 5,                       # specialist encoders: SAM ViT-H blocks 8/16/24/32 + neck; DA3 ViT-B blocks 3/5/7/9/11
+            'sam_zeroshot': 1, 'da3_zeroshot': 1, 'da3_zeroshot_scale': 1}     # zero-shot ceilings (scripts/collect_zeroshot.py)
 WAM = ['idm', 'joint_cross_attention', 'joint_cross_attention_detach', 'joint_self_attention',
-       'joint_self_attention_isolated', 'joint_self_attention_mutual', 'joint_self_attention_video_sees_action']
+       'joint_self_attention_isolated', 'joint_self_attention_mutual', 'joint_self_attention_video_sees_action',
+       'sft_ego_robot_cotrain_robotwin_full_action_sees_video']   # 8th: ego+robot co-trained SFT checkpoint (added 2026-10-06)
 N_LAYERS.update({m: 30 for m in WAM})
 REFS = ['videomaev2', 'dinov2', 'd4rt']
-REF_NAME = {'videomaev2': 'VideoMAEv2-L', 'dinov2': 'DINOv2-L', 'd4rt': 'D4RT encoder'}
+REF_NAME = {'videomaev2': 'VideoMAEv2-L', 'dinov2': 'DINOv2-L', 'd4rt': 'D4RT encoder',
+            'sam': 'SAM ViT-H encoder', 'da3': 'Depth Anything 3 encoder',
+            'sam_zeroshot': 'SAM ViT-H zero-shot, oracle box + point', 'da3_zeroshot': 'Depth Anything 3 zero-shot, scale + shift aligned', 'da3_zeroshot_scale': 'Depth Anything 3 zero-shot, scale-only aligned'}
+# references shown per task: the three generic encoders everywhere, plus the task's specialist encoder and its zero-shot ceiling
+TASK_REFS = {'cls': REFS, 'depth': REFS + ['da3'], 'seg': REFS + ['sam'], 'flow': REFS, 'track': REFS}
+ZEROSHOT = {'depth': 'da3_zeroshot', 'seg': 'sam_zeroshot'}
+ZS_EXTRA = {'depth': ['da3_zeroshot_scale']}           # secondary ceiling rows shown only in the task table
+ZS_MODELS = list(ZEROSHOT.values()) + sum(ZS_EXTRA.values(), [])
 # RoboTwin policy success, clean/randomised average (reports/performance.md)
 SUCCESS = {'joint_self_attention': 92.39, 'joint_self_attention_mutual': 92.15, 'joint_cross_attention_detach': 91.85,
            'joint_cross_attention': 88.25, 'idm': 87.95, 'joint_self_attention_video_sees_action': 87.63,
-           'joint_self_attention_isolated': 87.41}
-HIGH_TIER = ['joint_self_attention', 'joint_self_attention_mutual', 'joint_cross_attention_detach']
+           'joint_self_attention_isolated': 87.41,
+           'sft_ego_robot_cotrain_robotwin_full_action_sees_video': 92.34}   # pretrained_self_attention (user, 2026-10-08)
+HIGH_TIER = ['joint_self_attention', 'joint_self_attention_mutual', 'joint_cross_attention_detach', 'sft_ego_robot_cotrain_robotwin_full_action_sees_video']
+SUCC = lambda m: SUCCESS.get(m)                      # None when no RoboTwin success rate has been recorded yet
+succ_sort = lambda m: -(SUCCESS.get(m) or -1)        # models without a success rate sort last
 EMBS = ['agilex', 'franka']
 EMB_NAME = {'agilex': 'Agilex', 'franka': 'Franka'}
 # task -> (metric, label, lower_is_better, decimals, extra metrics shown in the ranking table)
 TASKS = {'cls': ('acc', 'accuracy', False, 3, []),
          'depth': ('absrel', 'AbsRel', True, 4, [('delta1', 'δ1'), ('pairwise', 'pairwise')]),
-         'seg': ('iou', 'IoU', False, 3, [])}
+         'seg': ('iou', 'IoU', False, 3, []),
+         'flow': ('epe3d', 'EPE3D mm', True, 1, [('epe3d_robot', 'EPE robot'), ('epe3d_moving', 'EPE moving obj'), ('epe3d_static', 'EPE static'), ('rel', 'EPE / zero-motion')]),
+         'track': ('aj', 'AJ', False, 3, [('delta_avg', 'δ_avg'), ('oa', 'OA'), ('epe2d', 'EPE2D px')])}
 
 
 # ---------------------------------------------------------------- data
@@ -59,7 +75,7 @@ def put(table, emb, model, metric, layer, value):
 
 def collect():
     """{'cls'|'depth'|'seg': {emb: {model: {metric: [value or None per layer]}}}, 'progress': {...}}"""
-    data = {'cls': {}, 'depth': {}, 'seg': {}}
+    data = {'cls': {}, 'depth': {}, 'seg': {}, 'flow': {}, 'track': {}}
     done = 0
     for emb in EMBS:
         for r in rows(CLS / emb):
@@ -72,6 +88,13 @@ def collect():
             else:
                 put(data['seg'], emb, r['model'], 'iou', r['layer'], r['iou'])
             done += 1
+        for r in rows(FLOW / emb):
+            if r["model"] == "dinov2":   # DINOv2 flow sweep dropped (user decision 2026-10-07): partial rows ignored
+                continue
+            for k in ('epe3d', 'epe3d_robot', 'epe3d_moving', 'epe3d_static', 'rel', 'zero3d'):
+                put(data['flow'], emb, r['model'], k, r['layer'], r[k])
+            for k in ('aj', 'delta_avg', 'oa', 'epe2d'):
+                put(data['track'], emb, r['model'], k, r['layer'], r[k])
     data['progress'] = {'done': done, 'total': 2 * 2 * sum(N_LAYERS.values())}
     return data
 
@@ -110,33 +133,37 @@ def table(headers, body_rows, cls=''):
     return f'<table class="{cls}"><thead><tr>{h}</tr></thead><tbody>{"".join(body_rows)}</tbody></table>'
 
 
+DISPLAY = {'joint_cross_attention_detach': 'video_generation',
+           'sft_ego_robot_cotrain_robotwin_full_action_sees_video': 'pretrained_self_attention'}   # detached cross-attn = no action gradient into video branch, i.e. a plain video generation model
+
+
+def disp(m):
+    return DISPLAY.get(m, m)
+
+
 def model_cell(m, ref=False):
-    return f'<td>{"<em>" + esc(REF_NAME[m]) + " (reference)</em>" if ref else "<span class=mono>" + esc(m) + "</span>"}</td>'
+    tag = ' (zero-shot ceiling)' if m in ZS_MODELS else ' (reference)'
+    return f'<td>{"<em>" + esc(REF_NAME[m]) + tag + "</em>" if ref else "<span class=mono>" + esc(disp(m)) + "</span>"}</td>'
 
 
 # ---------------------------------------------------------------- tables
 
-def summary_table(D):
-    """One row per model: success, then for each task x embodiment the Σ30 (OpenWAM) or best layer (references)."""
+def summary_table(D, mode='sum'):
+    """One row per model: success, then for each task x embodiment the Σ30 / best layer (OpenWAM) or best layer (references)."""
     heads = ['Model', 'Success % (rank)']
     for task, (met, label, lower, dec, _) in TASKS.items():
         for emb in EMBS:
-            heads.append(f'{label} Σ30 {"↓" if lower else "↑"} {EMB_NAME[emb]} (rank)')
+            heads.append(f'{head_label(label, lower, mode)} {EMB_NAME[emb]} (rank)')
     out = []
-    order = sorted(WAM, key=lambda m: -SUCCESS[m])
+    order = sorted(WAM, key=succ_sort)
+    ranks = {(task, emb): agg_ranks(D, task, emb, mode, TASKS[task][2]) for task in TASKS for emb in EMBS}
     for m in order:
-        cells = [model_cell(m), td(f'{SUCCESS[m]:.2f} ({SUCCESS_RANK[m]})')]
+        cells = [model_cell(m), td(f'{SUCCESS[m]:.2f} ({SUCCESS_RANK[m]})' if SUCC(m) is not None else 'n/a')]
         for task, (met, label, lower, dec, _) in TASKS.items():
             for emb in EMBS:
-                sig = {m2: sigma30(D, task, emb, m2) for m2 in WAM}
-                if sig[m] is None:
-                    c = curve(D, task, emb, m); n = len(valid(task, m, c)) if c else 0
-                    cells.append(td(f'{n}/30 layers', 'num partial'))
-                    continue
-                r = rank_map({k: v for k, v in sig.items() if v is not None}, lower)[m]
-                cells.append(td(f'{sig[m]:.{dec - 1}f} ({r})', 'num lead' if r == 1 else 'num'))
+                cells.append(agg_cell(D, task, emb, m, mode, lower, dec, ranks[(task, emb)]))
         out.append('<tr>' + ''.join(cells) + '</tr>')
-    for r in REFS:
+    for r in REFS + ['da3', 'sam'] + list(ZEROSHOT.values()):
         cells = [model_cell(r, True), td('–')]
         for task, (met, label, lower, dec, _) in TASKS.items():
             for emb in EMBS:
@@ -144,7 +171,7 @@ def summary_table(D):
                 if not c:
                     cells.append(td('–')); continue
                 b = best(task, r, c, lower)
-                cells.append(td(f'best layer {c[b]:.{dec}f}' + (f' (L{b})' if N_LAYERS[r] > 1 else '')))
+                cells.append(td(f'{c[b]:.{dec}f}' + (f' (L{b})' if N_LAYERS[r] > 1 else '') if r in ZS_MODELS else f'best layer {c[b]:.{dec}f}' + (f' (L{b})' if N_LAYERS[r] > 1 else '')))
         out.append('<tr class="ref">' + ''.join(cells) + '</tr>')
     return table(heads, out, 'summary-table')
 
@@ -183,42 +210,71 @@ def sigma30(D, task, emb, m):
     return sum(v) if len(v) == 30 else None
 
 
-def ranking_table(D, task):
-    """Primary table: success (rank) and Σ30 (rank) per robot. Secondary metrics go to a collapsed block below."""
+MODES = {'sum': ('Σ30', 'summed over all 30 layers'), 'best': ('best layer', 'best single layer')}
+
+
+def agg(D, task, emb, m, mode):
+    """(value, layer) under the view: mode='sum' -> (Σ30, None); mode='best' -> (best-layer value, layer). None until all 30 layers exist."""
+    c = curve(D, task, emb, m)
+    v = valid(task, m, c) if c else []
+    if len(v) < 30:
+        return None, None
+    if mode == 'sum':
+        return sum(v), None
+    b = best(task, m, c, TASKS[task][2])
+    return c[b], b
+
+
+def agg_cell(D, task, emb, m, mode, lower, dec, ranks, lead_cls='lead'):
+    v, l = agg(D, task, emb, m, mode)
+    if v is None:
+        c = curve(D, task, emb, m); n = len(valid(task, m, c)) if c else 0
+        return td(f'{n}/30 layers', 'num partial')
+    r = ranks[m]
+    txt = f'{v:.{dec - 1}f} ({r})' if mode == 'sum' else f'{v:.{dec}f} L{l} ({r})'
+    return td(txt, f'num {lead_cls}' if r == 1 else 'num')
+
+
+def agg_ranks(D, task, emb, mode, lower):
+    vals = {m: agg(D, task, emb, m, mode)[0] for m in WAM}
+    return rank_map({k: v for k, v in vals.items() if v is not None}, lower)
+
+
+def head_label(label, lower, mode):
+    return f'{label} {MODES[mode][0]} {"↓" if lower else "↑"}'
+
+
+def ranking_table(D, task, mode='sum'):
+    """Primary table: success (rank) and Σ30 / best-layer (rank) per robot. Secondary metrics go to a collapsed block below."""
     met, label, lower, dec, extra = TASKS[task]
-    sig = {emb: {m: sigma30(D, task, emb, m) for m in WAM} for emb in EMBS}
-    ranks = {emb: rank_map({m: v for m, v in sig[emb].items() if v is not None}, lower) for emb in EMBS}
-    heads = ['Model', 'Success % (rank)'] + [f'{EMB_NAME[emb]} {label} Σ30 {"↓" if lower else "↑"} (rank)' for emb in EMBS]
+    ranks = {emb: agg_ranks(D, task, emb, mode, lower) for emb in EMBS}
+    heads = ['Model', 'Success % (rank)'] + [f'{EMB_NAME[emb]} {head_label(label, lower, mode)} (rank)' for emb in EMBS]
     out = []
-    for m in sorted(WAM, key=lambda m: -SUCCESS[m]):
-        cells = [model_cell(m), td(f'{SUCCESS[m]:.2f} ({SUCCESS_RANK[m]})')]
+    for m in sorted(WAM, key=succ_sort):
+        cells = [model_cell(m), td(f'{SUCCESS[m]:.2f} ({SUCCESS_RANK[m]})' if SUCC(m) is not None else 'n/a')]
         for emb in EMBS:
-            v = sig[emb][m]
-            if v is None:
-                c = curve(D, task, emb, m); n = len(valid(task, m, c)) if c else 0
-                cells.append(td(f'{n}/30 layers', 'num partial'))
-            else:
-                r = ranks[emb][m]
-                cells.append(td(f'{v:.{dec - 1}f} ({r})', 'num best' if r == 1 else 'num'))
+            cells.append(agg_cell(D, task, emb, m, mode, lower, dec, ranks[emb], 'best'))
         out.append('<tr>' + ''.join(cells) + '</tr>')
-    for r in REFS:
+    for r in TASK_REFS[task] + ([ZEROSHOT[task]] if task in ZEROSHOT else []) + ZS_EXTRA.get(task, []):
         cells = [model_cell(r, True), td('–')]
         for emb in EMBS:
             c = curve(D, task, emb, r)
             if not c:
                 cells.append(td('–')); continue
             b = best(task, r, c, lower)
-            cells.append(td(f'best layer {c[b]:.{dec}f}' + (f' (L{b})' if N_LAYERS[r] > 1 else '')))
+            cells.append(td(f'{c[b]:.{dec}f}' if r in ZS_MODELS else f'best layer {c[b]:.{dec}f}' + (f' (L{b})' if N_LAYERS[r] > 1 else '')))
         out.append('<tr class="ref">' + ''.join(cells) + '</tr>')
     primary = table(heads, out)
+    if mode != 'sum':
+        return primary
 
     # secondary: layer mean, best layer, extra metrics
     heads2 = ['Model']
     for emb in EMBS:
         heads2 += [f'{EMB_NAME[emb]} layer mean', 'best layer'] + [f'mean {e[1]}' for e in extra]
     out2 = []
-    for m in WAM + REFS:
-        ref = m in REFS
+    for m in WAM + TASK_REFS[task]:
+        ref = m in TASK_REFS[task]
         cells = [model_cell(m, ref)]
         for emb in EMBS:
             c = curve(D, task, emb, m)
@@ -235,7 +291,7 @@ def ranking_table(D, task):
                  + (', ' + ', '.join(e[1] for e in extra) if extra else '') + '</summary><div class="inner"><div class="tbl-wrap">'
                  + table(heads2, out2) + '</div><p class="caption">Layer mean = Σ30 / 30 for OpenWAM; for references the mean over their own layers. '
                  'Rank in the main table is among the 7 OpenWAM architectures only; references are shown at their best layer because their depths differ.</p></div></details>')
-    return primary + secondary
+    return primary + '__SECONDARY__' + secondary
 
 
 def layer_tables(D, task):
@@ -248,11 +304,11 @@ def layer_tables(D, task):
             heads = ['model'] + [f'L{i}' for i in range(30)] + ['best']
             body = []
             wam_rows = []
-            for m in WAM + REFS:
+            for m in WAM + TASK_REFS[task]:
                 c = curve(D, task, emb, m, metric)
                 if m in WAM:
                     wam_rows.append(c)
-                cells = [model_cell(m, m in REFS)]
+                cells = [model_cell(m, m in TASK_REFS[task])]
                 if not c:
                     body.append('<tr>' + ''.join(cells) + '<td></td>' * 31 + '</tr>'); continue
                 v = valid(task, m, c); lo, hi = min(v), max(v); b = best(task, m, c, mlower)
@@ -274,52 +330,56 @@ def layer_tables(D, task):
             body.append('<tr class="spread">' + ''.join(cells) + '</tr>')
             parts.append(f'<h3 style="font-size:0.9rem">{EMB_NAME[emb]} · {esc(mlabel)}{" (lower is better)" if mlower else ""}</h3>'
                          f'<div class="lt-wrap">{table(heads, body, "lt")}</div>')
-    parts.append('<p class="caption">Columns are layer indices (OpenWAM 30, VideoMAEv2 24, DINOv2 25, D4RT final layer only). Shading is per row, darker = better; the outlined cell is the row\'s best layer. Last row: spread across the 7 OpenWAM architectures at that layer.</p>')
+    parts.append('<p class="caption">Columns are layer indices (OpenWAM 30, VideoMAEv2 24, DINOv2 25, D4RT final layer only; SAM: encoder blocks 8/16/24/32 then the 256-d neck; Depth Anything 3: ViT-B blocks 3/5/7/9/11). Shading is per row, darker = better; the outlined cell is the row\'s best layer. Last row: spread across the 7 OpenWAM architectures at that layer.</p>')
     return ''.join(parts)
 
 
-def success_table(D):
+def success_table(D, mode='sum'):
     heads = ['Tier (success %)', 'Architectures']
     for task, (met, label, lower, dec, _) in TASKS.items():
         for emb in EMBS:
-            heads.append(f'{label} Σ30 {EMB_NAME[emb]}')
-    low = [m for m in WAM if m not in HIGH_TIER]
+            heads.append(f'{label} {MODES[mode][0]} {EMB_NAME[emb]}')
+    low = [m for m in WAM if m not in HIGH_TIER and SUCC(m) is not None]
+    d_ = lambda dec: dec - 1 if mode == 'sum' else dec
 
     def group_row(name, ms):
-        cells = [f'<td><b>{esc(name)}</b></td>', f'<td class="mono" style="white-space:normal">{esc(", ".join(ms))}</td>']
+        cells = [f'<td><b>{esc(name)}</b></td>', f'<td class="mono" style="white-space:normal">{esc(", ".join(disp(m) for m in ms))}</td>']
         for task, (met, label, lower, dec, _) in TASKS.items():
             for emb in EMBS:
-                cs = [curve(D, task, emb, m) for m in ms]
-                if not all(cs) or any(len(valid(task, m, c)) < 30 for m, c in zip(ms, cs)):
+                vs = [agg(D, task, emb, m, mode)[0] for m in ms]
+                if any(v is None for v in vs):
                     cells.append(td('incomplete', 'num partial')); continue
-                cells.append(td(f'{np.mean([sum(valid(task, m, c)) for m, c in zip(ms, cs)]):.{dec - 1}f}'))
+                cells.append(td(f'{np.mean(vs):.{d_(dec)}f}'))
         return '<tr class="group">' + ''.join(cells) + '</tr>'
 
     def diff_row():
         cells = ['<td>high − low</td>', '<td></td>']
         for task, (met, label, lower, dec, _) in TASKS.items():
             for emb in EMBS:
-                g = lambda ms: [sum(valid(task, m, curve(D, task, emb, m))) for m in ms if curve(D, task, emb, m) and len(valid(task, m, curve(D, task, emb, m))) == 30]
+                g = lambda ms: [v for v in (agg(D, task, emb, m, mode)[0] for m in ms) if v is not None]
                 a, b = g(HIGH_TIER), g(low)
                 if len(a) < len(HIGH_TIER) or len(b) < len(low):
                     cells.append(td('–')); continue
                 d = np.mean(a) - np.mean(b); rel = 100 * d / np.mean(a + b)
-                cells.append(td(f'{d:+.{dec - 1}f} ({rel:+.1f}%)'))
+                cells.append(td(f'{d:+.{d_(dec)}f} ({rel:+.1f}%)'))
         return '<tr>' + ''.join(cells) + '</tr>'
     return table(heads, [group_row(f'High ({np.mean([SUCCESS[m] for m in HIGH_TIER]):.1f})', HIGH_TIER),
                          group_row(f'Low ({np.mean([SUCCESS[m] for m in low]):.1f})', low), diff_row()])
 
 
-def corr_table(D):
+def corr_table(D, mode='sum'):
     from scipy.stats import spearmanr
-    heads = ['Task', 'Embodiment', 'Spearman ρ (Σ30 vs success)', 'p', 'Architecture range of Σ30', 'as % of mean']
+    name = MODES[mode][0]
+    heads = ['Task', 'Embodiment', f'Spearman ρ ({name} vs success)', 'p', f'Architecture range of {name}', 'as % of mean']
     out = []
     for task, (met, label, lower, dec, _) in TASKS.items():
+        if mode == 'best':
+            dec += 1
         for emb in EMBS:
-            ms = [m for m in WAM if curve(D, task, emb, m) and len(valid(task, m, curve(D, task, emb, m))) == 30]
+            ms = [m for m in WAM if SUCC(m) is not None and agg(D, task, emb, m, mode)[0] is not None]
             if len(ms) < 4:
                 out.append(f'<tr><td>{esc(label)}</td><td>{EMB_NAME[emb]}</td>{td("incomplete", "num partial")}{td("")}{td("")}{td("")}</tr>'); continue
-            x = np.array([sum(valid(task, m, curve(D, task, emb, m))) for m in ms]) * (-1 if lower else 1)
+            x = np.array([agg(D, task, emb, m, mode)[0] for m in ms]) * (-1 if lower else 1)
             y = np.array([SUCCESS[m] for m in ms])
             r = spearmanr(x, y)
             rng = abs(x).max() - abs(x).min()
@@ -332,10 +392,16 @@ def findings(D):
     f = []
     f.append('<li><b>OpenWAM carries more geometric and object information than the specialist encoders under this probe.</b> On depth and segmentation every one of the 7 architectures beats VideoMAEv2, DINOv2 and D4RT at their best layers, on both robots (Agilex depth AbsRel 0.045 vs 0.053 for the best reference; segmentation IoU 0.18 vs 0.16). On task classification OpenWAM matches VideoMAEv2 on Franka and trails it by 2 points on Agilex.</li>')
     f.append('<li><b>Measured against the reference span, the architecture spread is 1–12% of it at the best layer and 2–25% on the layer mean.</b> The largest relative spreads are on classification (Franka layer mean 25%, Agilex best layer 11%) and segmentation (Agilex best layer 12%); depth pairwise accuracy separates architectures least (1–6%) because every model is above 0.9 on it.</li>')
-    f.append('<li><b>The ordering of architectures is not stable.</b> The architecture that leads a task on Agilex does not lead it on Franka (classification: idm vs video_sees_action; depth: isolated vs idm; segmentation: cross_attention vs detach), and no architecture leads at a majority of layers on any task.</li>')
-    f.append('<li><b>Policy success does not follow the visual probes.</b> The 92% tier and the 88% tier differ by under 0.3% on every Σ30, and Spearman correlations between Σ30 and success are weak and change sign between robots. The wiring that moves success (action attending to video, detaching the cross-attention gradient) leaves the video branch\'s depth, segmentation and semantic read-outs where they were.</li>')
+    f.append('<li><b>The ordering of architectures is not stable.</b> The architecture that leads a task on Agilex does not lead it on Franka (classification: idm vs video_sees_action; depth: isolated vs idm; segmentation: cross_attention vs video_generation), and no architecture leads at a majority of layers on any task.</li>')
+    f.append('<li><b>Policy success does not follow the visual probes.</b> The 92% tier and the 88% tier differ by under 0.3% on every Σ30, and Spearman correlations between Σ30 and success are weak and change sign between robots. The wiring that moves success (action attending to video, or detaching the action gradient as in video_generation) leaves the video branch\'s depth, segmentation and semantic read-outs where they were.</li>')
+    f.append('<li><b>Motion read-out (3D scene flow, 2D tracking) follows the same pattern.</b> All 7 architectures land within 0.4 mm of each other at the best layer (Agilex 15.7–16.1 mm, Franka 22.6–23.0 mm; Σ30 range under 1%), between the specialist D4RT encoder (14.9 / 19.6 mm) and VideoMAEv2 (20.6 / 29.7 mm). TAPVid AJ tells the same story (Agilex .441–.446, Franka .400–.407 vs D4RT .448 / .429 and VideoMAEv2 .378 / .341). video_generation and idm, the two architectures where the video branch receives no action gradient or the most direct one, bracket the ranking on Agilex and swap places on Franka, so the action wiring leaves motion information untouched as well. Flow peaks at layers 10–12.</li>')
     f.append('<li><b>OpenWAM peaks early.</b> Classification peaks at layers 7–9 of 30, depth and segmentation at layers 12–15, and every layer after 1 stays within a narrow band; VideoMAEv2 and DINOv2 rise steadily to layers 13–22 and VideoMAEv2 drops 8–11 points in its last two layers.</li>')
     return ''.join(f)
+
+
+def views(sum_html, best_html):
+    """Both views of a table; the page's Σ30 / best-layer switch (body[data-view]) shows one at a time."""
+    return f'<div class="view view-sum">{sum_html}</div><div class="view view-best">{best_html}</div>'
 
 
 def main():
@@ -343,15 +409,16 @@ def main():
     page = TEMPLATE.read_text()
     fills = {
         '__UPDATED__': time.strftime('%Y-%m-%d %H:%M'),
-        '__SUMMARY_TABLE__': summary_table(D),
+        '__SUMMARY_TABLE__': views(summary_table(D, 'sum'), summary_table(D, 'best')),
         '__YARDSTICK__': yardstick(D),
         '__FINDINGS__': findings(D),
-        '__SUCCESS_TABLE__': success_table(D),
-        '__CORR_TABLE__': corr_table(D),
+        '__SUCCESS_TABLE__': views(success_table(D, 'sum'), success_table(D, 'best')),
+        '__CORR_TABLE__': views(corr_table(D, 'sum'), corr_table(D, 'best')),
         '__DATA__': json.dumps(D, separators=(',', ':')),
     }
     for task in TASKS:
-        fills[f'__TABLE_{task}__'] = ranking_table(D, task)
+        primary_sum, secondary = ranking_table(D, task, 'sum').split('__SECONDARY__')
+        fills[f'__TABLE_{task}__'] = views(primary_sum, ranking_table(D, task, 'best')) + secondary
         fills[f'__LAYERS_{task}__'] = layer_tables(D, task)
     for k, v in fills.items():
         assert page.count(k) == 1, k

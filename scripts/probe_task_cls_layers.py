@@ -183,7 +183,8 @@ def videomae_frames(keys, workers):
     return out
 
 
-def videomae_layer_group(frames, layers, device='cuda'):
+def videomae_layer_group(frames, layers, device='cuda', keep_tubelets=None):
+    """keep_tubelets: optional index array over the 16 tubelets, applied before storing (halves memory for the flow probe)."""
     """{layer: (N, 3136, 1024) float16}: every token of the given VideoMAEv2 blocks, both clips concatenated."""
     model = _videomae(device)
     clip = model.config.model_config['num_frames']
@@ -202,7 +203,10 @@ def videomae_layer_group(frames, layers, device='cuda'):
                     if l in per_clip:
                         per_clip[l].append(x[0])
             for l in layers:
-                t = torch.cat(per_clip[l]).to(torch.float16).cpu().numpy()
+                t = torch.cat(per_clip[l])
+                if keep_tubelets is not None:
+                    t = t.reshape(16, -1, t.shape[-1])[keep_tubelets].reshape(-1, t.shape[-1])
+                t = t.to(torch.float16).cpu().numpy()
                 if l not in out:
                     out[l] = np.empty((len(frames),) + t.shape, np.float16)
                 out[l][i] = t

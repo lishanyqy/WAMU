@@ -19,14 +19,16 @@ from matplotlib.backends.backend_pdf import PdfPages
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from build_probe_report import N_LAYERS, ROOT, WAM, collect
+from build_probe_report import N_LAYERS, ROOT, TASK_REFS, WAM, ZEROSHOT, collect
 
 OUT = ROOT / 'reports/openwam_downstream_probes.pdf'
 A4 = (11.69, 8.27)
-SHORT = {'idm': 'idm', 'joint_cross_attention': 'cross_attn', 'joint_cross_attention_detach': 'cross_attn_detach',
+SHORT = {'idm': 'idm', 'joint_cross_attention': 'cross_attn', 'joint_cross_attention_detach': 'video_generation',
          'joint_self_attention': 'self_attn', 'joint_self_attention_isolated': 'self_attn_isolated',
          'joint_self_attention_mutual': 'self_attn_mutual', 'joint_self_attention_video_sees_action': 'self_attn_video_sees_action',
-         'videomaev2': 'VideoMAEv2-L', 'dinov2': 'DINOv2-L', 'd4rt': 'D4RT'}
+         'sft_ego_robot_cotrain_robotwin_full_action_sees_video': 'pretrained_self_attention',
+         'videomaev2': 'VideoMAEv2-L', 'dinov2': 'DINOv2-L', 'd4rt': 'D4RT',
+         'sam': 'SAM ViT-H enc', 'da3': 'DA3 enc', 'sam_zeroshot': 'SAM zero-shot (oracle prompt)', 'da3_zeroshot': 'DA3 zero-shot (scale-aligned)'}
 REFS = ['videomaev2', 'dinov2', 'd4rt']
 EMB = {'agilex': 'Agilex (50 tasks)', 'franka': 'Franka (46 tasks)'}
 # (task, metric, title, lower_is_better, decimals)
@@ -35,6 +37,8 @@ METRICS = [
     ('depth', 'absrel', 'Depth AbsRel', True, 4),
     ('depth', 'pairwise', 'Depth pairwise ordinal accuracy', False, 3),
     ('seg', 'iou', 'Target-object segmentation IoU', False, 3),
+    ('flow', 'epe3d', '3D scene flow endpoint error (mm)', True, 1),
+    ('track', 'aj', 'Point tracking, TAPVid Average Jaccard', False, 3),
 ]
 DEFS = {
     'acc': 'Share of test episodes whose task the probe names correctly from one layer (chance 0.020 Agilex, 0.022 Franka). '
@@ -45,9 +49,14 @@ DEFS = {
                 '"which is closer" right (DA-2K style). 0.5 is chance.',
     'iou': 'Overlap / union between the predicted and true mask of the manipulated object (covers ~1-2% of the image), '
            'averaged over frames where it is visible. Linear head per token, class-balanced loss, 60 epochs.',
+    'epe3d': 'For a query pixel at probe frame k, the 3D error (mm) of the predicted displacement to frame k+1 (16 raw frames). GT from '
+             'per-entity poses (_extra.hdf5), exact for every pixel on a known entity; queries stratified robot / moving object / static.',
+    'aj': 'TAPVid Average Jaccard over pixel thresholds {1,2,4,8,16}: predicted-visible-and-within-threshold vs truly-visible, averaged. '
+          'Same probe as the flow task; 3D prediction projected to 2D, 4th output is the visibility call.',
 }
-WAM_COLORS = ['#1f77b4', '#9467bd', '#17becf', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22']
-REF_STYLE = {'videomaev2': ('#ff7f0e', '-'), 'dinov2': ('#2ca02c', '-'), 'd4rt': ('#000000', '--')}
+WAM_COLORS = ['#1f77b4', '#9467bd', '#17becf', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#d62728']
+REF_STYLE = {'videomaev2': ('#ff7f0e', '-'), 'dinov2': ('#2ca02c', '-'), 'd4rt': ('#000000', '--'),
+             'sam': ('#b5179e', '-'), 'da3': ('#c77d00', '-'), 'sam_zeroshot': ('#b5179e', ':'), 'da3_zeroshot': ('#c77d00', ':')}
 
 
 def series(data, task, emb, model, metric):
@@ -84,7 +93,7 @@ def cover(pdf, data):
                 b = best(c, lower)
                 means = [lmean(c2, task, m2) for m2, c2 in wam]
                 parts.append(f'OpenWAM {lmean(c, task, m):.{dec}f} (sum30 {lmean(c, task, m) * 30:.{dec - 1}f}) [{c[b]:.{dec}f} L{b}] ({SHORT[m]}; spread {max(means) - min(means):.{dec}f})')
-            for r in REFS:
+            for r in TASK_REFS[task] + ([ZEROSHOT[task]] if task in ZEROSHOT else []):
                 c = series(data, task, emb, r, metric)
                 if c:
                     b = best(c, lower)
@@ -117,13 +126,13 @@ def curves(pdf, data, task, metric, title, lower, dec):
             if c:
                 xs = [i / 29 * 100 for i, v in enumerate(c) if v is not None]
                 ax.plot(xs, [v for v in c if v is not None], color=col, lw=1.2, marker='o', ms=2, label=SHORT[m])
-        for r in REFS:
+        for r in TASK_REFS[task] + ([ZEROSHOT[task]] if task in ZEROSHOT else []):
             c = series(data, task, emb, r, metric)
             if not c:
                 continue
             col, ls = REF_STYLE[r]
             if N_LAYERS[r] == 1:
-                ax.axhline(c[0], color=col, ls=ls, lw=1.4, label=f'{SHORT[r]} (final layer)')
+                ax.axhline(c[0], color=col, ls=ls, lw=1.4, label=SHORT[r] if 'zeroshot' in r else f'{SHORT[r]} (final layer)')
             else:
                 pts = [(i / (N_LAYERS[r] - 1) * 100, v) for i, v in enumerate(c) if v is not None and not (task == 'cls' and r == 'dinov2' and i == 0)]
                 ax.plot(*zip(*pts), color=col, ls=ls, lw=2.2, label=SHORT[r])
@@ -141,7 +150,7 @@ def curves(pdf, data, task, metric, title, lower, dec):
 
 
 def table(pdf, data, task, metric, title, lower, dec, emb):
-    models = WAM + REFS
+    models = WAM + TASK_REFS[task]
     rows, labels = [], []
     for m in models:
         c = series(data, task, emb, m, metric)

@@ -8,7 +8,7 @@
   --bg: #f6f7f9; --surface: #ffffff; --fg: #1b1f2a; --muted: #5b6375; --line: #d9dde6;
   --grid: #e8ebf1; --accent: #2c4fa3; --accent-soft: #e3e9f8;
   --ok: #1f7a4d; --ok-soft: #dcf0e5; --run: #a2620a; --run-soft: #f8ead2; --bad: #b3362d; --bad-soft: #f7dfdc; --queue: #8a91a1;
-  --s-wam: #2a78d6; --s-vmae: #eb6834; --s-dino: #1baf7a; --s-variant: #9aa1b0; --s-hi: #1b1f2a;
+  --s-wam: #2a78d6; --s-vmae: #eb6834; --s-dino: #1baf7a; --s-sam: #b5179e; --s-da3: #c77d00; --s-variant: #9aa1b0; --s-hi: #1b1f2a;
   --c-ref: #6a7bb0; --c-wam: #2c4fa3; --c-vm: #2f8a83; --c-d4: #8a5aa8; --c-eval: #c47a12;
   --font-display: "IBM Plex Sans Condensed", "Arial Narrow", "Helvetica Neue", sans-serif;
   --font-body: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
@@ -19,7 +19,7 @@
     --bg: #12151c; --surface: #1a1e28; --fg: #e4e7ee; --muted: #9aa2b4; --line: #2c3240; --grid: #252a36;
     --accent: #8ea8f0; --accent-soft: #232c45;
     --ok: #5cc28e; --ok-soft: #173326; --run: #e2a650; --run-soft: #3a2c15; --bad: #ef7d73; --bad-soft: #3d1f1c; --queue: #6c7385;
-    --s-wam: #3987e5; --s-vmae: #d95926; --s-dino: #199e70; --s-variant: #5d6577; --s-hi: #e4e7ee;
+    --s-wam: #3987e5; --s-vmae: #d95926; --s-dino: #199e70; --s-sam: #d04bbd; --s-da3: #e0961a; --s-variant: #5d6577; --s-hi: #e4e7ee;
     --c-ref: #8f9dcc; --c-wam: #8ea8f0; --c-vm: #5ec2b8; --c-d4: #bb93d6; --c-eval: #e8a548;
     color-scheme: dark;
   }
@@ -28,7 +28,7 @@
   --bg: #12151c; --surface: #1a1e28; --fg: #e4e7ee; --muted: #9aa2b4; --line: #2c3240; --grid: #252a36;
   --accent: #8ea8f0; --accent-soft: #232c45;
   --ok: #5cc28e; --ok-soft: #173326; --run: #e2a650; --run-soft: #3a2c15; --bad: #ef7d73; --bad-soft: #3d1f1c; --queue: #6c7385;
-  --s-wam: #3987e5; --s-vmae: #d95926; --s-dino: #199e70; --s-variant: #5d6577; --s-hi: #e4e7ee;
+  --s-wam: #3987e5; --s-vmae: #d95926; --s-dino: #199e70; --s-sam: #d04bbd; --s-da3: #e0961a; --s-variant: #5d6577; --s-hi: #e4e7ee;
   --c-ref: #8f9dcc; --c-wam: #8ea8f0; --c-vm: #5ec2b8; --c-d4: #bb93d6; --c-eval: #e8a548;
   color-scheme: dark;
 }
@@ -80,6 +80,14 @@ td .mono { white-space: nowrap; }
 .controls .lab { font-size: 0.85rem; color: var(--muted); margin-right: 4px; }
 .chip { font: inherit; font-family: var(--font-mono); font-size: 0.78rem; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--fg); cursor: pointer; }
 .chip[aria-pressed="true"] { background: var(--fg); color: var(--surface); border-color: var(--fg); }
+.viewbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 4px 0 14px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+.viewbar .lab { font-size: 0.85rem; color: var(--muted); }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
+.seg button { font: inherit; font-size: 0.82rem; padding: 5px 14px; border: 0; background: var(--surface); color: var(--fg); cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+.viewbar .hint { font-size: 0.82rem; color: var(--muted); }
+body[data-view="best"] .view-sum, body[data-view="best"] .only-sum { display: none; }
+body:not([data-view="best"]) .view-best, body:not([data-view="best"]) .only-best { display: none; }
 .charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 @media (max-width: 860px) { .charts { grid-template-columns: minmax(0, 1fr); } }
 .panel { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 14px 14px 8px; display: grid; gap: 6px; position: relative; min-width: 0; }
@@ -156,14 +164,23 @@ tr.group td { background: var(--accent-soft); font-weight: 600; }
   <div class="meta">
     <span>Updated __UPDATED__</span>
     <span>4,800 episodes · Agilex 2,500 · Franka 2,300</span>
-    <span>7 OpenWAM architectures · 3 reference encoders · all 1,040 probe runs complete</span>
+    <span>8 OpenWAM models (7 architectures + pretrained_self_attention) · 3 reference encoders · all probe runs complete</span>
   </div>
 </header>
 
 <section id="summary">
   <div class="rail"><div class="eyebrow">Summary</div><h2>All results in one table</h2></div>
   <div class="body">
-    <p>Σ30 is the headline number: the metric summed over all 30 OpenWAM layers (equivalently 30 × the layer mean), so no single layer is cherry-picked. The number in brackets is the rank among the 7 architectures (1 = best); compare it with the success-rate rank to see whether a probe tracks policy success. Reference encoders have different depths, so for them the best layer is shown instead. Success rate is the RoboTwin policy success (clean/randomised average) from <code>reports/performance.md</code>.</p>
+    <div class="viewbar" role="group" aria-label="Choose how each architecture is scored">
+      <span class="lab">Score each architecture by</span>
+      <div class="seg" id="viewseg">
+        <button type="button" data-view="sum" aria-pressed="true">Σ30 · sum over all layers</button>
+        <button type="button" data-view="best" aria-pressed="false">Best layer only</button>
+      </div>
+      <span class="hint">Switches every table on this page: summary, the five task tables, the success tiers and the correlations. Charts and per-layer tables are unaffected.</span>
+    </div>
+    <p class="only-sum">Σ30 is the headline number: the metric summed over all 30 OpenWAM layers (equivalently 30 × the layer mean), so no single layer is cherry-picked. The number in brackets is the rank among the 7 architectures (1 = best); compare it with the success-rate rank to see whether a probe tracks policy success. Reference encoders have different depths, so for them the best layer is shown instead. Success rate is the RoboTwin policy success (clean/randomised average) from <code>reports/performance.md</code>.</p>
+    <p class="only-best">Best-layer view: each architecture is scored by its single best layer for that metric (value, layer index, then rank among the 7 architectures). This is the usual probing convention and is directly comparable with the reference encoders, which are always shown at their best layer; it is noisier than Σ30 because one lucky layer decides the number. Success rate is the RoboTwin policy success (clean/randomised average) from <code>reports/performance.md</code>.</p>
     <div class="tbl-wrap">__SUMMARY_TABLE__</div>
     <h3>How to read the scale</h3>
     <p>Absolute values are low on every task for every model, including the specialist encoders: this protocol uses 5 training episodes per task and coarse token grids (OpenWAM 8 × 10 per frame), so it measures what a tiny probe can read out, not the ceiling of the task. The meaningful scale is therefore the span the three reference encoders occupy. The tiles below express the spread across the 7 OpenWAM architectures as a fraction of that span.</p>
@@ -191,7 +208,7 @@ tr.group td { background: var(--accent-soft); font-weight: 600; }
     <div class="tbl-wrap">__TABLE_cls__</div>
     <div class="charts" data-task="cls"></div>
     <div class="legend">
-      <span><i style="border-color: var(--s-wam)"></i>OpenWAM, mean of 7 architectures</span>
+      <span><i style="border-color: var(--s-wam)"></i>OpenWAM, mean of architectures with data</span>
       <span><i class="thin" style="border-color: var(--s-variant)"></i>each OpenWAM architecture</span>
       <span><i style="border-color: var(--s-vmae)"></i>VideoMAEv2-L</span>
       <span><i style="border-color: var(--s-dino)"></i>DINOv2-L</span>
@@ -211,16 +228,19 @@ tr.group td { background: var(--accent-soft); font-weight: 600; }
         <dt>AbsRel ↓</dt><dd>Mean |predicted − true| / true depth per pixel. 0.05 means 5% error on average. The reference encoders span 0.053–0.079 (Agilex) and 0.091–0.139 (Franka).</dd>
         <dt>δ1 ↑</dt><dd>Share of pixels within a factor 1.25 of the true depth.</dd>
         <dt>Pairwise ↑</dt><dd>DA-2K-style relative depth: of 200 random pixel pairs per frame whose true depths differ by ≥ 10%, the share ordered correctly. 0.5 is chance; every model scores above 0.9, so this metric saturates and separates models least.</dd>
+        <dt>Specialist ablation</dt><dd>Two extra rows. <b>Depth Anything 3 encoder</b>: the same linear probe on the tokens of DA3-BASE's ViT-B backbone (blocks 3/5/7/9/11, 12 × 16 tokens at 336 × 448 input), i.e. a backbone trained for depth, probed like everything else. <b>Depth Anything 3 zero-shot</b>: DA3's own predicted depth, no training on RoboTwin at all; DA3 predicts scale-free depth, so each frame is aligned to the GT before AbsRel / δ1: the main row uses a least-squares scale + shift per frame (the MiDaS / Depth Anything protocol for relative depth, applied in depth space), the second row a single median scale factor; pairwise accuracy needs no alignment. It is a ceiling for what a dedicated depth model reads from these frames, not a probe.</dd>
         <dt>Probe</dt><dd>Linear head per token → log depth, bilinearly upsampled to 120 × 160, trained 60 epochs on 5 episodes per task, scored on aligned frames 4, 8, …, 32.</dd>
       </dl>
     </div>
     <div class="tbl-wrap">__TABLE_depth__</div>
     <div class="charts" data-task="depth"></div>
     <div class="legend">
-      <span><i style="border-color: var(--s-wam)"></i>OpenWAM, mean of 7 architectures</span>
+      <span><i style="border-color: var(--s-wam)"></i>OpenWAM, mean of architectures with data</span>
       <span><i class="thin" style="border-color: var(--s-variant)"></i>each OpenWAM architecture</span>
       <span><i style="border-color: var(--s-vmae)"></i>VideoMAEv2-L</span>
       <span><i style="border-color: var(--s-dino)"></i>DINOv2-L patch tokens</span>
+      <span><i style="border-color: var(--s-da3)"></i>Depth Anything 3 encoder (ViT-B blocks 3/5/7/9/11)</span>
+      <span><i class="dash" style="border-color: var(--s-da3)"></i>Depth Anything 3 zero-shot (scale-aligned ceiling)</span>
       <span><i class="dash" style="border-color: var(--muted)"></i>D4RT encoder (final layer only)</span>
     </div>
     <p class="caption">AbsRel curves; lower is better.</p>
@@ -235,26 +255,77 @@ tr.group td { background: var(--accent-soft); font-weight: 600; }
       <h3>Metric</h3>
       <dl>
         <dt>IoU ↑</dt><dd>Overlap / union between the predicted and true mask of the manipulated object, averaged over frames where it is visible. The object covers only 1–2% of the image and the probe sees an 8 × 10 (OpenWAM) or 14–16² (references) token grid upsampled to 120 × 160, so even DINOv2's best layer reaches 0.16 on Agilex and 0.12 on Franka. Read values against that span, not against 1.0.</dd>
+        <dt>Specialist ablation</dt><dd>Two extra rows. <b>SAM ViT-H encoder</b>: the same linear probe on the tokens of SAM's image encoder (hidden states after its 4 global-attention blocks and the 256-d neck embedding its mask decoder consumes; 64 × 64 tokens pooled to 16 × 16). <b>SAM zero-shot</b>: SAM prompted with the GT target's bounding box and centroid (oracle prompts, best of its 3 masks by SAM's own score), no training; it is a ceiling for prompted segmentation of these objects, not a probe, and the probe rows never see the prompt.</dd>
         <dt>Probe</dt><dd>Linear head per token → mask logit, class-balanced BCE, 60 epochs on 5 episodes per task.</dd>
       </dl>
     </div>
     <div class="tbl-wrap">__TABLE_seg__</div>
     <div class="charts" data-task="seg"></div>
     <div class="legend">
-      <span><i style="border-color: var(--s-wam)"></i>OpenWAM, mean of 7 architectures</span>
+      <span><i style="border-color: var(--s-wam)"></i>OpenWAM, mean of architectures with data</span>
       <span><i class="thin" style="border-color: var(--s-variant)"></i>each OpenWAM architecture</span>
       <span><i style="border-color: var(--s-vmae)"></i>VideoMAEv2-L</span>
       <span><i style="border-color: var(--s-dino)"></i>DINOv2-L patch tokens</span>
+      <span><i style="border-color: var(--s-sam)"></i>SAM ViT-H encoder (blocks 8/16/24/32 + neck)</span>
+      <span><i class="dash" style="border-color: var(--s-sam)"></i>SAM zero-shot with oracle prompts (ceiling)</span>
       <span><i class="dash" style="border-color: var(--muted)"></i>D4RT encoder (final layer only)</span>
     </div>
     <details class="layers"><summary>Every layer, every model: IoU</summary><div class="inner">__LAYERS_seg__</div></details>
   </div>
 </section>
 
+<section id="flow">
+  <div class="rail"><div class="eyebrow">Task 4 · motion</div><h2>3D scene flow</h2></div>
+  <div class="body">
+    <div class="metric">
+      <h3>Metrics</h3>
+      <dl>
+        <dt>EPE3D ↓</dt><dd>3D endpoint error in mm: for a query pixel at probe frame k, the distance between the predicted and true 3D displacement of that point to frame k+1 (16 raw frames ≈ 0.5 s). Ground truth comes from the per-entity poses recorded in the replay (<code>_extra.hdf5</code>), so it is exact for every pixel on a known entity. Queries are stratified into robot links, moving objects (|Δ| &gt; 1 mm) and static scene, 16 each per step.</dd>
+        <dt>zero-motion, rel</dt><dd>EPE of predicting "nothing moved", and EPE3D divided by it. rel &lt; 1 means the probe reads real motion out of the tokens; the static group is where zero-motion is already perfect.</dd>
+        <dt>Probe</dt><dd>Attention read-out whose query encodes (u, v); it attends over the tokens of frames k and k+1 (frame-tagged) and regresses Δxyz plus a visibility logit. 60 epochs on 5 episodes per task; steps k = 1..7 for every model.</dd>
+      </dl>
+    </div>
+    <div class="tbl-wrap">__TABLE_flow__</div>
+    <div class="charts" data-task="flow"></div>
+    <div class="legend">
+      <span><i style="border-color: var(--s-wam)"></i>OpenWAM, mean of architectures with data</span>
+      <span><i class="thin" style="border-color: var(--s-variant)"></i>each OpenWAM architecture</span>
+      <span><i style="border-color: var(--s-vmae)"></i>VideoMAEv2-L</span>
+      <span><i class="dash" style="border-color: var(--muted)"></i>D4RT encoder (final layer only)</span>
+    </div>
+    <p class="caption">EPE3D curves; lower is better. DINOv2 is not a yardstick for Tasks 4–5: its single-frame tokens carry no motion and its sweep was stopped (partial result: 36–60 mm, far outside every other model).</p>
+    <details class="layers"><summary>Every layer, every model: EPE3D</summary><div class="inner">__LAYERS_flow__</div></details>
+  </div>
+</section>
+
+<section id="track">
+  <div class="rail"><div class="eyebrow">Task 5 · tracking</div><h2>2D point tracking (TAPVid metrics)</h2></div>
+  <div class="body">
+    <div class="metric">
+      <h3>Metrics</h3>
+      <dl>
+        <dt>AJ ↑</dt><dd>TAPVid Average Jaccard: over pixel thresholds {1, 2, 4, 8, 16}, the Jaccard of "predicted visible and within threshold" against "truly visible", averaged. Penalises wrong positions and wrong visibility together.</dd>
+        <dt>δ_avg ↑</dt><dd>Fraction of truly visible queries whose predicted 2D endpoint is within threshold, averaged over the same thresholds (320 × 240 frame).</dd>
+        <dt>OA ↑</dt><dd>Occlusion accuracy: how often the probe's visible / not-visible call at k+1 is right.</dd>
+        <dt>Probe</dt><dd>The same probe as Task 4; its 3D prediction is projected through the camera for the 2D endpoint and its 4th output is the visibility call.</dd>
+      </dl>
+    </div>
+    <div class="tbl-wrap">__TABLE_track__</div>
+    <div class="charts" data-task="track"></div>
+    <div class="legend">
+      <span><i style="border-color: var(--s-wam)"></i>OpenWAM, mean of architectures with data</span>
+      <span><i class="thin" style="border-color: var(--s-variant)"></i>each OpenWAM architecture</span>
+      <span><i style="border-color: var(--s-vmae)"></i>VideoMAEv2-L</span>
+      <span><i class="dash" style="border-color: var(--muted)"></i>D4RT encoder (final layer only)</span>
+    </div>
+    <details class="layers"><summary>Every layer, every model: AJ</summary><div class="inner">__LAYERS_track__</div></details>
+  </div>
+</section>
+
 <section id="success">
   <div class="rail"><div class="eyebrow">Architecture</div><h2>Probes against policy success</h2></div>
   <div class="body">
-    <p>The seven architectures split into two success tiers by one design factor: whether the action branch can attend to video tokens. Architectures where it can (self_attn, mutual) or where the cross-attention gradient is detached sit at 92%; the rest sit at 88%. The table compares the two tiers on every probe.</p>
+    <p>The eight models split into two success tiers by one design factor: whether the action branch can attend to video tokens. Architectures where it can (self_attn, mutual, pretrained_self_attention), plus video_generation (cross-attention with the action gradient detached, so the video branch is trained as a pure video generation model), sit at 92%; the rest sit at 88%. The table compares the two tiers on every probe.</p>
     <div class="tbl-wrap">__SUCCESS_TABLE__</div>
     <div class="tbl-wrap">__CORR_TABLE__</div>
   </div>
@@ -267,7 +338,7 @@ tr.group td { background: var(--accent-soft); font-weight: 600; }
       <li><b>One probe seed, one train/test split.</b> Architecture gaps of the size observed cannot be ranked until bootstrap intervals over test episodes are added.</li>
       <li><b>Success rates are single evaluations</b> from <code>reports/performance.md</code>; their own uncertainty is unknown.</li>
       <li><b>Probe budget.</b> Classification uses 10 epochs (about 5 points short of convergence); depth and segmentation use 60 because their linear heads were far from converged at 10. The same budget applies to every model and layer.</li>
-      <li><b>Not covered.</b> Action-relevant information (predicting joint motion from video tokens) is the dimension these architectures were designed to differ on and has not been probed yet; 3D flow and tracking lack GT.</li>
+      <li><b>Tasks 4–5</b> use the per-entity poses added to the dataset on 2026-10-05; the probe's own metrics are listed in each section.</li>
     </ul>
   </div>
 </section>
@@ -283,10 +354,12 @@ const DATA = __DATA__;
 (function () {
   const ns = "http://www.w3.org/2000/svg";
   const WAM = ["idm", "joint_cross_attention", "joint_cross_attention_detach", "joint_self_attention",
-               "joint_self_attention_isolated", "joint_self_attention_mutual", "joint_self_attention_video_sees_action"];
-  const SHORT = { idm: "idm", joint_cross_attention: "cross_attn", joint_cross_attention_detach: "cross_attn_detach",
+               "joint_self_attention_isolated", "joint_self_attention_mutual", "joint_self_attention_video_sees_action",
+               "sft_ego_robot_cotrain_robotwin_full_action_sees_video"];
+  const SHORT = { idm: "idm", joint_cross_attention: "cross_attn", joint_cross_attention_detach: "video_generation",
                   joint_self_attention: "self_attn", joint_self_attention_isolated: "self_attn_isolated",
-                  joint_self_attention_mutual: "self_attn_mutual", joint_self_attention_video_sees_action: "self_attn_video_sees_action" };
+                  joint_self_attention_mutual: "self_attn_mutual", joint_self_attention_video_sees_action: "self_attn_video_sees_action",
+                  sft_ego_robot_cotrain_robotwin_full_action_sees_video: "pretrained_self_attention" };
   const NLAYERS = { videomaev2: 24, dinov2: 25, d4rt: 1 };
   WAM.forEach((m) => (NLAYERS[m] = 30));
   const EMB = { agilex: "Agilex · 50 tasks", franka: "Franka · 46 tasks" };
@@ -294,6 +367,8 @@ const DATA = __DATA__;
     cls:   { metric: "acc", label: "accuracy", lower: false, fmt: 3, skipDino0: true },
     depth: { metric: "absrel", label: "AbsRel", lower: true, fmt: 4, extra: ["delta1", "pairwise"] },
     seg:   { metric: "iou", label: "IoU", lower: false, fmt: 3 },
+    flow:  { metric: "epe3d", label: "EPE3D (mm)", lower: true, fmt: 1 },
+    track: { metric: "aj", label: "AJ", lower: false, fmt: 3 },
   };
   let highlight = null;
 
@@ -354,12 +429,18 @@ const DATA = __DATA__;
     const series = [
       { a: curve(task, emb, "videomaev2"), color: "var(--s-vmae)", label: "VideoMAEv2", skip0: false },
       { a: curve(task, emb, "dinov2"), color: "var(--s-dino)", label: "DINOv2", skip0: !!t.skipDino0 },
+      { a: curve(task, emb, "da3"), color: "var(--s-da3)", label: "DA3 encoder", skip0: false },
+      { a: curve(task, emb, "sam"), color: "var(--s-sam)", label: "SAM encoder", skip0: false },
       { a: meanCurve(task, emb), color: "var(--s-wam)", label: "OpenWAM mean", skip0: false },
     ].filter((s) => s.a && s.a.some((v) => v != null));
     series.forEach((s) => el(svg, "path", { d: path(s.a, s.skip0), fill: "none", stroke: s.color, "stroke-width": 2.25, "stroke-linejoin": "round", "stroke-linecap": "round" }));
     const lastV = (a) => { for (let i = a.length - 1; i >= 0; i--) if (a[i] != null) return a[i]; return null; };
     const ends = series.map((s) => ({ label: s.label, yy: y(lastV(s.a)) }));
     if (d4) ends.push({ label: "D4RT " + d4[0].toFixed(t.fmt), yy: y(d4[0]) });
+    const zsName = task === "depth" ? "da3_zeroshot" : task === "seg" ? "sam_zeroshot" : null;
+    const zs = zsName ? curve(task, emb, zsName) : null;
+    if (zs) { el(svg, "line", { x1: M.l, x2: W - M.r, y1: y(zs[0]), y2: y(zs[0]), stroke: task === "depth" ? "var(--s-da3)" : "var(--s-sam)", "stroke-width": 1.5, "stroke-dasharray": "5 4" });
+      ends.push({ label: (task === "depth" ? "DA3 zero-shot " : "SAM zero-shot ") + zs[0].toFixed(t.fmt), yy: y(zs[0]) }); }
     if (highlight && curve(task, emb, highlight)) ends.push({ label: SHORT[highlight], yy: y(lastV(curve(task, emb, highlight))) });
     ends.sort((a, b) => a.yy - b.yy);
     for (let i = 1; i < ends.length; i++) if (ends[i].yy - ends[i - 1].yy < 13) ends[i].yy = ends[i - 1].yy + 13;
@@ -403,6 +484,14 @@ const DATA = __DATA__;
       draw(task, "agilex", holder); draw(task, "franka", holder);
     }
   }
+  const seg = document.getElementById("viewseg");
+  const setView = (v) => {
+    if (v === "best") document.body.dataset.view = "best"; else delete document.body.dataset.view;
+    seg.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.view === v)));
+    try { localStorage.setItem("probe-view", v); } catch (e) {}
+  };
+  seg.querySelectorAll("button").forEach((b) => b.addEventListener("click", () => setView(b.dataset.view)));
+  try { if (localStorage.getItem("probe-view") === "best") setView("best"); } catch (e) {}
   const chips = document.getElementById("chips");
   [null, ...WAM].forEach((m) => {
     const b = document.createElement("button"); b.type = "button"; b.className = "chip"; b.textContent = m ? SHORT[m] : "none";
