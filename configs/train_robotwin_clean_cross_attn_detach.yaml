@@ -1,0 +1,62 @@
+defaults:
+  - model: dual_system
+  - dataloader: robotwin
+  - _self_
+
+model:
+  architecture:
+    variant: joint_cross_attn
+    attention_mask_mode: action_sees_video
+    video_attention_mask_mode: first_frame_causal
+    detach_bridge: true
+    action_film: false
+    film_cond_dim: 4096
+    film_type: concat
+    film_token_reduction: 8
+    film_num_action_tokens: 32
+
+training:
+  debug: false
+  learning_rate: 1e-4
+  adam_betas: [0.9, 0.95]
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  num_epochs: 5
+  max_steps: 30000
+  batch_size: 16
+  gradient_accumulation_steps: 4
+  lr_scheduler: cosine
+  warmup_ratio: 0.05
+  lr_min_ratio: 0.01
+  action_lr: null
+  video_lr: null
+  mixed_precision: bf16
+  zero_stage: 2
+  use_gradient_checkpointing: true
+  use_gradient_checkpointing_offload: false
+  initialize_model_on_cpu: false
+  offload_optimizer_device: none
+  lambda_video: 1.0
+  lambda_action: 1.0
+  max_timestep_boundary: 1.0
+  min_timestep_boundary: 0.0
+  output_path: outputs/cross_attn_all_video_detached_clean_robotwin
+  save_steps: 2000
+  save_full_states_for_resume: false
+  keep_last_k_ckpts: 2
+  finetune_ckpt_path: null
+  resume_ckpt_path: null
+  dataset_num_workers: 8
+
+dataloader:
+  dataset_dir: ${oc.env:OPEN_WAM_ROBOTWIN_DATA,/path/to/robotwin2.0/dataset}
+  embodiment: aloha-agilex
+  variant: clean_50
+  split: train
+  multiview: true
+
+project:
+  name: openwam-robotwin-clean-crossattn-all-video-detached
+  wandb:
+    enabled: false
+    project: openwam-robotwin

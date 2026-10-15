@@ -40,6 +40,19 @@ def log(*a):
     print(time.strftime('%H:%M:%S'), *a, flush=True)
 
 
+def _plan_helper(a, task):
+    """planned(model, n_layers): the layers to probe for one model under --layer-plan / --layers / all."""
+    plan = None
+    if a.layer_plan is not None:
+        plan = json.loads(Path(a.layer_plan).read_text())[a.embodiment][task]
+
+    def planned(model, n):
+        if plan is not None:
+            return [l for l in plan.get(model, []) if l < n]
+        return [l for l in (a.layers if a.layers is not None else range(n)) if l < n]
+    return planned
+
+
 def split_keys(split, embodiment):
     s = json.loads(Path(split).read_text())[embodiment]
     return s['train'], s['test']
@@ -246,9 +259,11 @@ def main():
     p.add_argument('--workers', type=int, default=16)
     p.add_argument('--seed', type=int, default=0)
     p.add_argument('--csv-name', default='layers.csv', help='separate file per concurrent run')
+    p.add_argument('--layer-plan', type=Path, default=None, help='JSON {embodiment: {task: {model: [layers]}}}: probe only these layers per model (e.g. the top-10 of a previous seed)')
     a = p.parse_args()
 
     tr, te = split_keys(a.split, a.embodiment)
+    planned = _plan_helper(a, 'cls')
     keys = Keys(tr + te, a.embodiment)
     names = np.array([k.split('__')[0] for k in keys])
     classes, y = np.unique(names, return_inverse=True)
@@ -270,7 +285,7 @@ def main():
 
     for ref in a.refs:
         if ref == 'videomaev2':
-            todo = [l for l in range(24) if (ref, l) not in done]
+            todo = [l for l in planned(ref, 24) if (ref, l) not in done]
             if todo:
                 frames = videomae_frames(keys, a.workers)
                 for g in range(0, len(todo), a.group):
@@ -283,7 +298,7 @@ def main():
             continue
         xs = ref_tokens(Path(f'artifacts/{a.embodiment}_temporal_features_gt'), ref, keys)
         for l, x in xs.items():
-            if (ref, l) in done:
+            if (ref, l) in done or l not in planned(ref, len(xs)):
                 continue
             acc, auroc = probe_with_retry(x[:n_tr], y_tr, x[n_tr:], y_te, len(classes), a.seed, a.epochs)
             record(ref, 'reference', l, x.shape[1], acc, auroc)
@@ -294,7 +309,7 @@ def main():
         models = sorted(d.name for d in (OPENWAM_ROOT / a.embodiment).iterdir()
                         if all((d / f'{k}.npz').exists() for k in keys))
     for m in models:
-        todo = [l for l in (a.layers if a.layers is not None else range(30)) if (m, l) not in done]
+        todo = [l for l in planned(m, 30) if (m, l) not in done]
         for g in range(0, len(todo), a.group):
             layers = todo[g:g + a.group]
             xs = openwam_layer_group(a.embodiment, m, keys, layers, a.workers)

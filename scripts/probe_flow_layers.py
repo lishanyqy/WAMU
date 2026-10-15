@@ -27,7 +27,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from probe_task_cls_layers import Keys, log, split_keys
+from probe_task_cls_layers import _plan_helper, Keys, log, split_keys
 from probe_motion_layers import MotionReadout, chunk_stats, d4rt_frames, dinov2_frames_tokens, openwam_frames, videomae_frames_tokens
 
 GT_DIR = Path('artifacts/downstream/gt')
@@ -125,9 +125,11 @@ def main():
     p.add_argument('--workers', type=int, default=16)
     p.add_argument('--seed', type=int, default=0)
     p.add_argument('--device', default='cuda')
+    p.add_argument('--layer-plan', type=Path, default=None, help='JSON {embodiment: {task: {model: [layers]}}}: probe only these layers per model (e.g. the top-10 of a previous seed)')
     a = p.parse_args()
 
     tr, te = split_keys(a.split, a.embodiment)
+    planned = _plan_helper(a, 'flow')
     keys = Keys(tr + te, a.embodiment)
     G = np.load(GT_DIR / f'{a.embodiment}_flow.npz')
     pos = {k: i for i, k in enumerate(G['keys'])}
@@ -169,8 +171,7 @@ def main():
             f'epe2d {r["epe2d"]:.1f}px delta {r["delta_avg"]:.3f} oa {r["oa"]:.3f} aj {r["aj"]:.3f} ({time.time() - t0:.0f}s)')
 
     def todo(model, n):
-        ls = a.layers if a.layers is not None else range(n)
-        return [l for l in ls if l < n and (model, l) not in done]
+        return [l for l in planned(model, n) if (model, l) not in done]
 
     for ref in a.refs:
         if ref == 'd4rt' and todo('d4rt', 1):

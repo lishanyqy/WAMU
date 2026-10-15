@@ -31,7 +31,7 @@ import torch.nn.functional as F
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from downstream_data import npz_member_memmap
-from probe_task_cls_layers import Keys, log, openwam_layer_group, split_keys
+from probe_task_cls_layers import Keys, _plan_helper, log, openwam_layer_group, split_keys
 
 GT_DIR = Path('artifacts/downstream/gt')
 LATENTS = slice(1, 9)                    # OpenWAM latents 1..8 -> aligned frames 4..32
@@ -234,9 +234,12 @@ def main():
     p.add_argument('--workers', type=int, default=16)
     p.add_argument('--seed', type=int, default=0)
     p.add_argument('--device', default='cuda')
+    p.add_argument('--layer-plan', type=Path, default=None, help='JSON {embodiment: {task: {model: [layers]}}}: probe only these layers per model (e.g. the top-10 of a previous seed)')
     a = p.parse_args()
 
     tr, te = split_keys(a.split, a.embodiment)
+    TASK_KEY = {'depth': 'depth', 'segmentation': 'seg'}
+    planned = {t: _plan_helper(a, TASK_KEY[t]) for t in a.tasks}
     keys = Keys(tr + te, a.embodiment)
     n_tr = len(tr)
     gt = np.load(GT_DIR / f'{a.embodiment}.npz')
@@ -255,7 +258,7 @@ def main():
 
     def run(model, kind, layer, x):
         for task in a.tasks:
-            if (model, layer, task) in done:
+            if (model, layer, task) in done or layer not in planned[task](model, 10 ** 6):
                 continue
             t0 = time.time()
             for attempt in range(10):
@@ -279,8 +282,7 @@ def main():
             log(f'{model} layer {layer} {task}: ' + ' '.join(f'{k} {v:.4f}' for k, v in r.items()) + f' ({time.time() - t0:.0f}s)')
 
     def todo(model, n_layers):
-        ls = a.layers if a.layers is not None else range(n_layers)
-        return [l for l in ls if l < n_layers and any((model, l, t) not in done for t in a.tasks)]
+        return sorted({l for t in a.tasks for l in planned[t](model, n_layers) if (model, l, t) not in done})
 
     for ref in a.refs:
         if ref == 'd4rt':

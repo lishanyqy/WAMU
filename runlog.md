@@ -28,7 +28,7 @@ torchrun --nproc_per_node=4 scripts/train.py \
 
 
 ### 2026-10-08 (v1.0)
-Concat Action FiLM
+cross attention action sees video
 ```bash
 # Activate your environment
 conda activate openwam
@@ -39,3 +39,18 @@ torchrun --nproc_per_node=4 scripts/train.py \
   model.video_backbone.model_path=assets/video_backbone_ckpt/Wan2.2-TI2V-5B \
   training.output_path=/scratch/ou29/rz6525/WAMU/WAMU/outputs/cross_attn_clean \
 ```
+
+### 2026-10-15 (v1.1)
+cross attention action only sees video but detach the loss conduction.
+```bash
+# Activate your environment
+conda activate openwam
+# export your robotwin data env
+export OPEN_WAM_ROBOTWIN_DATA=/path/to/robotwin2.0/dataset
+torchrun --nproc_per_node=4 scripts/train.py \
+  --config-name train_robotwin_clean_cross_attn_detach.yaml \
+  model.video_backbone.model_path=assets/video_backbone_ckpt/Wan2.2-TI2V-5B \
+  training.output_path=/scratch/ou29/rz6525/WAMU/WAMU/outputs/cross_attn_detach_robotwin_clean \
+  # training.debug=true
+```
+

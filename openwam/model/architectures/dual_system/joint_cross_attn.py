@@ -29,7 +29,10 @@ logger = logging.getLogger(__name__)
 
 
 def _cross_attn_options(cfg) -> dict:
-    return {"detach_bridge": bool(_cfg_get(cfg, "detach_bridge", False))}
+    return {
+        "detach_bridge": bool(_cfg_get(cfg, "detach_bridge", False)),
+        "action_video_attention_mode": _cfg_get(cfg, "action_video_attention_mode", "all_frames"),
+    }
 
 
 @register_architecture(
@@ -51,6 +54,7 @@ class DualSystemCrossAttnArchitecture(BaseWAMArchitecture):
     def __init__(self, cfg=None):
         super().__init__(cfg)
         self._detach_bridge: bool = False
+        self._action_video_attention_mode: str = "all_frames"
         self._compiled_action_forward: Optional[Callable[..., Tensor]] = None
         if cfg is None:
             return
@@ -76,6 +80,12 @@ class DualSystemCrossAttnArchitecture(BaseWAMArchitecture):
         text_dim = int(self._cfg_get(cfg, "text_dim", _vb_text_dim or 4096))
         self._init_proprio_context(cfg, text_dim=text_dim)
         self._detach_bridge = bool(cfg.get("detach_bridge", False))
+        self._action_video_attention_mode = str(cfg.get("action_video_attention_mode", "all_frames"))
+        if self._action_video_attention_mode not in {"all_frames", "first_frame"}:
+            raise ValueError(
+                "action_video_attention_mode must be 'all_frames' or 'first_frame', "
+                f"got {self._action_video_attention_mode!r}"
+            )
 
         # Mirror joint_self_attn's heterogeneous-hidden support: when
         # ``attn_head_dim`` is supplied explicitly, the action residual hidden
@@ -110,6 +120,10 @@ class DualSystemCrossAttnArchitecture(BaseWAMArchitecture):
     @property
     def detach_bridge(self) -> bool:
         return self._detach_bridge
+
+    @property
+    def action_video_attention_mode(self) -> str:
+        return self._action_video_attention_mode
 
     def apply_compile_optimizations(self, compile_cfg) -> None:
         """Compile the tensor-only action cross-attention helper when requested."""
@@ -238,7 +252,17 @@ class DualSystemCrossAttnArchitecture(BaseWAMArchitecture):
                     # the spatial axes into a single token axis so the action
                     # backbone's cross-attn sees the Wan-compatible 3D shape.
                     B5, T5, H5, W5, D5 = bridge.shape
+                    if self._action_video_attention_mode == "first_frame":
+                        bridge = bridge[:, :1]
                     bridge = bridge.reshape(B5, T5 * H5 * W5, D5)
+                elif self._action_video_attention_mode == "first_frame":
+                    tokens_per_frame = int(vstate.grid_height) * int(vstate.grid_width)
+                    if tokens_per_frame <= 0:
+                        raise RuntimeError(
+                            "Cannot select the first video frame from a cross-attention bridge "
+                            f"with grid_height={vstate.grid_height}, grid_width={vstate.grid_width}."
+                        )
+                    bridge = bridge[:, :tokens_per_frame]
                 bridges[block_id] = bridge.detach() if detach_bridge else bridge
 
         video_pred = vb.finalize(vstate)
