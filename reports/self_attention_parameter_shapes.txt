@@ -1,0 +1,41 @@
+OpenWAM robotwin_dual_system_joint_self_attention
+checkpoint: /home/a1905721/modelspace/robotwin_dual_system_joint_self_attention/checkpoint_step_9890.safetensors
+
+Per-block parameter shapes (action blocks 0..29; identical for every block)
+=========================================================================
+action_backbone.blocks.{i}.self_attn.q.weight      (3072, 1024)
+action_backbone.blocks.{i}.self_attn.q.bias        (3072,)
+action_backbone.blocks.{i}.self_attn.k.weight      (3072, 1024)
+action_backbone.blocks.{i}.self_attn.k.bias        (3072,)
+action_backbone.blocks.{i}.self_attn.v.weight      (3072, 1024)
+action_backbone.blocks.{i}.self_attn.v.bias        (3072,)
+action_backbone.blocks.{i}.self_attn.o.weight      (1024, 3072)
+action_backbone.blocks.{i}.self_attn.o.bias        (1024,)
+action_backbone.blocks.{i}.self_attn.norm_q.weight (3072,)
+action_backbone.blocks.{i}.self_attn.norm_k.weight (3072,)
+
+Action-side interpretation
+==========================
+Action residual stream: 1024
+Action Q/K/V projection: 1024 -> 3072
+Attention space: 3072 = 24 heads x 128 head dimension
+Action attention output: 3072 -> 1024
+
+Video-side interpretation
+=========================
+The video stream remains in its native 3072 residual width. Its Wan video
+self-attention uses Q/K/V and output projections of shape (3072, 3072), i.e.
+3072 -> 3072 for Q/K/V and 3072 -> 3072 for the output.
+
+Joint attention data flow
+=========================
+video tokens:  (B, T_video, 3072) -> Q/K/V in 3072 attention space
+action tokens: (B, T_action, 1024) -> Q/K/V in 3072 attention space
+tokens are mixed in the shared 24 x 128 attention space; the action branch
+is projected back to 1024 by self_attn.o.
+
+Unlike the cross-attention model, there is no action_backbone.video_projs
+layer in this checkpoint. Video is not first reduced to 1024.
+
+This file is based on checkpoint tensor metadata and the implementation in
+openwam/model/action_backbone/separate_action_dit.py plus the Wan video DiT.

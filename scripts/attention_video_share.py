@@ -96,13 +96,15 @@ def install_self_attn_hooks(arch):
 
     def step(layer_id, vstate, astate, **kw):
         STATE['layer'] = layer_id
+        if STATE.get('ablate') and layer_id >= STATE.get('ablate_from', 0) and kw.get('attn_mask') is not None:
+            kw['attn_mask'] = STATE['cut_mask']                      # action rows cannot attend video from this layer on
         return orig_step(layer_id, vstate, astate, **kw)
 
     def build_mask(**kw):
         m = orig_mask(**kw)
         Sv = kw['s_video']
-        if STATE.get('ablate'):
-            m = m.clone(); m[Sv:Sv + kw['s_action'], :Sv] = False
+        cut = m.clone(); cut[Sv:Sv + kw['s_action'], :Sv] = False
+        STATE['cut_mask'] = cut
         return m
 
     def mixed(q, k, v, attn_mask):
@@ -138,7 +140,10 @@ def install_self_attn_hooks(arch):
                 rec = STATE['rec'][layer_id]
                 rec['r_video'] += float((updv.norm(dim=-1) / xn).mean()); rec['r_attn'] += float((upd.norm(dim=-1) / xn).mean())
                 rec['frac_video'] += float((updv.norm(dim=-1) / upd.norm(dim=-1).clamp_min(1e-6)).mean())
-        return orig_post(layer_id, astate, attn_out, post_state)
+        astate = orig_post(layer_id, astate, attn_out, post_state)
+        if layer_id in STATE.get('decode_layers', ()):
+            STATE['xs'][layer_id] = astate.payload.x_action.detach()
+        return astate
 
     drv.step, drv._mixed_attention, drv._build_attention_mask, ab.post_attn_at_layer = step, mixed, build_mask, post
     return vb.num_layers, H
@@ -158,6 +163,7 @@ def install_cross_attn_hooks(arch):
             x_action = x_action + upd_sa
             h = self.bridge_attn_norm(x_action) * (1 + scale_ca) + shift_ca
             upd_ca = gate_ca * self.cross_attn(h, x_video)
+            cut_here = STATE.get('ablate') and li >= STATE.get('ablate_from', 0)
             if not STATE.get('ablate'):
                 ca = self.cross_attn
                 q = rearrange(ca.norm_q(ca.q(h)), 'b s (n d) -> b n s d', n=H).float(); k = rearrange(ca.norm_k(ca.k(x_video)), 'b s (n d) -> b n s d', n=H).float()
@@ -174,10 +180,15 @@ def install_cross_attn_hooks(arch):
                 rec['r_video'] += float((upd_ca.float().norm(dim=-1) / xn2).mean()); rec['r_attn'] += float((upd_sa.float().norm(dim=-1) / xn).mean())
                 rec['frac_video'] += float((upd_ca.float().norm(dim=-1) / (upd_ca.float().norm(dim=-1) + upd_sa.float().norm(dim=-1)).clamp_min(1e-6)).mean())
                 x_action = x_action + upd_ca
+            elif not cut_here:
+                x_action = x_action + upd_ca
             if context is not None:
                 x_action = x_action + self.context_attn(self.context_attn_norm(x_action), context, ctx_mask=context_mask)
             h = self.ffn_norm(x_action) * (1 + scale_ff) + shift_ff
-            return x_action + gate_ff * self.ffn(h)
+            x_action = x_action + gate_ff * self.ffn(h)
+            if li in STATE.get('decode_layers', ()):
+                STATE['xs'][li] = x_action.detach()
+            return x_action
         block.forward = fwd
     return ab.num_layers, H
 
@@ -268,6 +279,8 @@ def main():
     p.add_argument('--limit-tasks', type=int, default=0); p.add_argument('--action-t', type=float, nargs='+', default=[0.25, 0.75])
     p.add_argument('--video-sigma', type=float, default=0.5); p.add_argument('--seed', type=int, default=0); p.add_argument('--device', default='cuda')
     p.add_argument('--output', type=Path, default=None)
+    p.add_argument('--cut-from', type=int, nargs='*', default=[], help='cumulative cut-off: extra forwards where the action stream sees video only in layers < k, for each k')
+    p.add_argument('--decode-layers', type=int, nargs='*', default=[], help='logit lens: decode the action stream after these layers with the final action decoder')
     a = p.parse_args()
     name = a.ckpt_dir.name
     out = a.output or Path(f'artifacts/attention/{name}_{a.embodiment}.npz')
@@ -298,6 +311,7 @@ def main():
     oom_retry(lambda: offload_text_encoder(vb, sorted({s[3]['prompt'] for s in samples}), a.device), 'prompt encoding')
     oom_retry(lambda: place_on_gpu(arch, a.device), 'moving the model to the GPU')
     rec_sum = None; n_rec = 0; abl = []; t0 = time.time(); n_samples = 0
+    STATE['decode_layers'] = set(a.decode_layers); lens = []; cut = []
     g = torch.Generator(device=a.device).manual_seed(a.seed)
     for task_name, ep, start, sample in samples:
         task = Path(task_name)
@@ -323,8 +337,9 @@ def main():
                         Sa = noisy.shape[1]
                         if rec_sum is None:
                             STATE['rec'] = new_rec(L, H, 64, Sa)       # frame count fixed after the first forward
-                        STATE['ablate'] = False; STATE['rec'] = new_rec(L, H, STATE.get('Fr', 64), Sa)
+                        STATE['ablate'] = False; STATE['rec'] = new_rec(L, H, STATE.get('Fr', 64), Sa); STATE['xs'] = {}
                         _, pred = arch(noisy, at, proprio=proprio, **inputs, timestep=vt)
+                        xs_with = STATE['xs']
                         Fr = STATE['grid'][0]
                         if rec_sum is None:
                             rec_sum = new_rec(L, H, Fr, Sa); STATE['Fr'] = Fr
@@ -333,9 +348,14 @@ def main():
                                 vv = v[:Fr] if k == 'mass_video_frame' else v
                                 rec_sum[l][k] = rec_sum[l][k] + vv
                         n_rec += 1
-                        STATE['ablate'] = True
+                        STATE['ablate'] = True; STATE['ablate_from'] = 0; STATE['xs'] = {}
                         _, pred_abl = arch(noisy, at, proprio=proprio, **inputs, timestep=vt)
-                        STATE['ablate'] = False
+                        STATE['ablate'] = False; xs_wo = STATE['xs']
+                        cut_preds = {}
+                        for kcut in a.cut_from:
+                            STATE['ablate'] = True; STATE['ablate_from'] = kcut; STATE['xs'] = {}
+                            _, cut_preds[kcut] = arch(noisy, at, proprio=proprio, **inputs, timestep=vt)
+                        STATE['ablate'] = False; STATE['ablate_from'] = 0
                         # valid (time, dim) cells only: unified 80-d action layouts pad the unused dims, and the training loss masks them too
                         am = sample.get('action_mask')
                         mk = (torch.as_tensor(np.asarray(am)).to(pred.device).view(1, *np.asarray(am).shape).float() if am is not None else torch.ones_like(pred)).float()
@@ -350,6 +370,14 @@ def main():
                                     float((e ** 2).sum() / (tg ** 2).sum().clamp_min(1e-6)), float(((pa - tg) ** 2).sum() / (tg ** 2).sum().clamp_min(1e-6)),
                                     float((e ** 2).sum()), float((d ** 2).sum()), float((e * d).sum()), float((tg ** 2).sum()),
                                     float(d.norm(dim=-1).sum() / pf.norm(dim=-1).sum().clamp_min(1e-6)), float(tok_r.mean()), float(tok_r.median())))
+                        for kcut, pc in cut_preds.items():
+                            pc = pc.float() * mk
+                            cut.append((float(asig), kcut, float(((pc - tg) ** 2).sum() / (tg ** 2).sum().clamp_min(1e-6)), float(((pc - pf) ** 2).sum() / (pf ** 2).sum().clamp_min(1e-6)),
+                                        float(((pf - tg) ** 2).sum() / (tg ** 2).sum().clamp_min(1e-6)), float(((pa - tg) ** 2).sum() / (tg ** 2).sum().clamp_min(1e-6))))
+                        for l in sorted(STATE['decode_layers']):
+                            pw = ab.action_decoder(xs_with[l]).float() * mk; po = ab.action_decoder(xs_wo[l]).float() * mk
+                            lens.append((float(asig), l, float(((pw - tg) ** 2).sum() / (tg ** 2).sum().clamp_min(1e-6)), float(((po - tg) ** 2).sum() / (tg ** 2).sum().clamp_min(1e-6)),
+                                         float((po - pw).norm() / pw.norm().clamp_min(1e-6)), float(((pw - pf) ** 2).sum() / (pf ** 2).sum().clamp_min(1e-6))))
                 oom_retry(one_window, f'window {task.name}/{ep}/{start}')
                 n_samples += 1
                 if n_samples % 10 == 0:
@@ -359,7 +387,9 @@ def main():
     abl_arr = np.array([r[3:] for r in abl], np.float64)
     np.savez(out, kind=kind, model=name, embodiment=a.embodiment, n_forwards=n_rec, n_windows=n_samples, grid=np.array(STATE['grid']), head_rows=STATE['head_rows'],
              action_sigmas=np.array([float(asched.sigmas[i]) for i in act_ids]), video_sigma=float(vsched.sigmas[vid_id]),
-             abl_meta=np.array([(r[0], r[1], r[2]) for r in abl], dtype=object), abl=abl_arr, abl_cols=np.array(['action_sigma', 'vel_change', 'mse', 'mse_abl', 'nmse', 'nmse_abl', 'e2', 'd2', 'ed', 'tg2', 'vel_sumratio', 'vel_tokmean', 'vel_tokmedian']), **per_layer)
+             abl_meta=np.array([(r[0], r[1], r[2]) for r in abl], dtype=object), abl=abl_arr, lens=np.array(lens, np.float64).reshape(-1, 6),
+             lens_cols=np.array(['action_sigma', 'layer', 'nmse_with', 'nmse_without', 'vel_change', 'dist_to_final']),
+             cut=np.array(cut, np.float64).reshape(-1, 6), cut_cols=np.array(['action_sigma', 'cut_from', 'nmse_cut', 'dist_to_full', 'nmse_full', 'nmse_nocut']), abl_cols=np.array(['action_sigma', 'vel_change', 'mse', 'mse_abl', 'nmse', 'nmse_abl', 'e2', 'd2', 'ed', 'tg2', 'vel_sumratio', 'vel_tokmean', 'vel_tokmedian']), **per_layer)
     mv = per_layer['mass_video_frame'].sum(1)
     print(f'done {name}: {n_samples} windows, {n_rec} forwards. video mass by layer (mean {mv.mean():.3f}): ' + ' '.join(f'{x:.2f}' for x in mv), flush=True)
     print(f'  r_video by layer (mean {per_layer["r_video"].mean():.4f}): ' + ' '.join(f'{x:.3f}' for x in per_layer['r_video']), flush=True)

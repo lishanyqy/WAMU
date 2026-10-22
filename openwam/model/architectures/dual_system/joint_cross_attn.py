@@ -115,6 +115,7 @@ class DualSystemCrossAttnArchitecture(BaseWAMArchitecture):
             attn_head_dim=attn_head_dim,
             text_dim=text_dim,
             shift_action=cfg.get("shift_action"),
+            bridge_kv_dim=cfg.get("bridge_kv_dim"),
         )
 
     @property

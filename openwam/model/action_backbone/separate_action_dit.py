@@ -380,6 +380,7 @@ class ActionDiT(ActionDiTBackbone):
         variant: str = "joint_cross_attn",
         attn_head_dim: Optional[int] = None,
         text_dim: int = 4096,
+        bridge_kv_dim: Optional[int] = None,
         freq_dim: int = 256,
         max_action_len: int = 1024,
         eps: float = 1e-6,
@@ -439,9 +440,13 @@ class ActionDiT(ActionDiTBackbone):
         # Cross-attn variant: per-layer projection from video_dim to action dim.
         # Self-attn doesn't need this — the MoT driver handles modality coupling
         # through the joint attention itself.
+        # cfg.model.architecture.bridge_kv_dim: width the video bridge is projected to before the bridge cross-attention K/V.
+        #   None (default) -> dim (the original 3072 -> 1024 -> 3072 path); == video_dim -> no projection at all; any other
+        #   value -> Linear(video_dim, bridge_kv_dim) followed by K/V from that width.
+        self.bridge_kv_dim = int(bridge_kv_dim) if bridge_kv_dim is not None else dim
         if variant == "joint_cross_attn":
-            if video_dim != dim:
-                self.video_projs = nn.ModuleList([nn.Linear(video_dim, dim) for _ in range(num_layers)])
+            if video_dim != self.bridge_kv_dim:
+                self.video_projs = nn.ModuleList([nn.Linear(video_dim, self.bridge_kv_dim) for _ in range(num_layers)])
             else:
                 self.video_projs = nn.ModuleList([nn.Identity() for _ in range(num_layers)])
 
@@ -473,7 +478,7 @@ class ActionDiT(ActionDiTBackbone):
             )
         else:
             self.blocks = nn.ModuleList(
-                [CrossAttnActionDiTBlock(dim, num_heads, attn_head_dim, ffn_dim, eps) for _ in range(num_layers)]
+                [CrossAttnActionDiTBlock(dim, num_heads, attn_head_dim, ffn_dim, eps, kv_hidden_dim=self.bridge_kv_dim) for _ in range(num_layers)]
             )
 
         # FastWAM-compatible simple action decoder; no AdaLN and no zero init.
@@ -613,7 +618,7 @@ class ActionDiT(ActionDiTBackbone):
                 raise RuntimeError(
                     f"bridge dtype mismatch at action block {i}: bridge={bridge.dtype}, actions={x.dtype}."
                 )
-            expected_dim = getattr(self.video_projs[i], "in_features", self.dim)
+            expected_dim = getattr(self.video_projs[i], "in_features", self.bridge_kv_dim)
             if bridge.shape[-1] != expected_dim:
                 raise ValueError(
                     f"bridge tensor last dim ({bridge.shape[-1]}) must match expected video_dim={expected_dim} "

@@ -1,0 +1,38 @@
+OpenWAM robotwin_dual_system_joint_cross_attention
+checkpoint: /home/a1905721/modelspace/robotwin_dual_system_joint_cross_attention/checkpoint_step_9890.safetensors
+
+Conclusion
+==========
+The video branch DOES have a learned projection before the action-side
+cross-attention: video features are projected from 3072 to 1024.
+Then the cross-attention K/V layers project 1024 back to the common attention
+width 3072 (= 24 heads x 128 head dimension).
+The attention output is projected from 3072 back to the action residual width
+1024.
+
+Per-block parameter shapes (blocks 0..29; identical for every block)
+=====================================================================
+action_backbone.video_projs.{i}.weight       (1024, 3072)   # video 3072 -> 1024
+action_backbone.video_projs.{i}.bias         (1024,)
+
+action_backbone.blocks.{i}.cross_attn.q.weight      (3072, 1024)  # action Q: 1024 -> 3072
+action_backbone.blocks.{i}.cross_attn.q.bias        (3072,)
+action_backbone.blocks.{i}.cross_attn.k.weight      (3072, 1024)  # projected video K: 1024 -> 3072
+action_backbone.blocks.{i}.cross_attn.k.bias        (3072,)
+action_backbone.blocks.{i}.cross_attn.v.weight      (3072, 1024)  # projected video V: 1024 -> 3072
+action_backbone.blocks.{i}.cross_attn.v.bias        (3072,)
+action_backbone.blocks.{i}.cross_attn.o.weight      (1024, 3072)  # attention output 3072 -> action 1024
+action_backbone.blocks.{i}.cross_attn.o.bias        (1024,)
+action_backbone.blocks.{i}.cross_attn.norm_q.weight (3072,)
+action_backbone.blocks.{i}.cross_attn.norm_k.weight (3072,)
+
+Data flow
+=========
+video bridge:       (B, T_video, 3072)
+video_projs[i]:     (B, T_video, 3072) -> (B, T_video, 1024)
+cross-attn K/V:     (B, T_video, 1024) -> (B, T_video, 3072)
+attention space:    24 heads x 128 = 3072
+cross-attn output:  (B, T_action, 3072) -> (B, T_action, 1024)
+
+This file is based on the checkpoint tensor metadata and the implementation
+in openwam/model/action_backbone/separate_action_dit.py.
