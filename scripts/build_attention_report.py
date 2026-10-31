@@ -14,14 +14,27 @@ from build_probe_report import SUCCESS, disp
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / 'artifacts/attention'
 EMB = sys.argv[1] if len(sys.argv) > 1 else 'franka'
-EMB_NAME = {'franka': 'Franka', 'aloha-agilex': 'Aloha-Agilex (in-distribution: the checkpoints were trained on it)'}[EMB]
-OUT = ROOT / ('reports/openwam_attention.html' if EMB == 'franka' else f'reports/openwam_attention_{EMB.split("-")[0]}.html')
-ORDER = ['joint_self_attention', 'joint_self_attention_mutual', 'joint_self_attention_video_sees_action', 'joint_self_attention_isolated',
-         'sft_ego_robot_cotrain_robotwin_full_action_sees_video', 'joint_cross_attention', 'joint_cross_attention_detach']
+EMB_NAME = {'franka': 'Franka', 'aloha-agilex': 'Aloha-Agilex (in-distribution: the checkpoints were trained on it)', 'aloha-random': 'Aloha-Agilex randomized_500 (100 random training windows per task)'}[EMB]
+SET = sys.argv[2] if len(sys.argv) > 2 else 'v1'
+ORDER_SETS = {'v1': ['joint_self_attention', 'joint_self_attention_mutual', 'joint_self_attention_video_sees_action', 'joint_self_attention_isolated',
+                     'sft_ego_robot_cotrain_robotwin_full_action_sees_video', 'joint_cross_attention', 'joint_cross_attention_detach'],
+              'v2': ['sft_from_scratch_robotwin_clean', 'cross_attn_clean', 'cross_attn_detach_robotwin_clean', 'cross_attn_clean_fix3072']}
+ORDER = ORDER_SETS[SET]
+OUT = ROOT / (('reports/openwam_attention.html' if EMB == 'franka' else f'reports/openwam_attention_{EMB.split("-")[0]}.html') if SET == 'v1' else f'reports/openwam_attention_{SET}_{EMB.split("-")[0]}.html')
 MODE = {'joint_self_attention': 'action sees all video', 'joint_self_attention_mutual': 'mutual: action sees all video, video sees action',
         'joint_self_attention_video_sees_action': 'action sees first frame only; video sees action', 'joint_self_attention_isolated': 'action sees first frame only',
         'sft_ego_robot_cotrain_robotwin_full_action_sees_video': 'action sees all video (co-trained)', 'joint_cross_attention': 'bridge cross-attention, every layer',
-        'joint_cross_attention_detach': 'bridge cross-attention, gradient detached'}
+        'joint_cross_attention_detach': 'bridge cross-attention, gradient detached',
+        'sft_from_scratch_robotwin_clean': 'self-attention, action sees all video (30k steps, from scratch, 80-d unified actions)',
+        'cross_attn_clean': 'bridge cross-attention, every layer, 3072→1024→3072 bridge (30k steps)',
+        'cross_attn_detach_robotwin_clean': 'bridge cross-attention, gradient detached (video generation), 3072→1024→3072 bridge (30k steps)',
+        'cross_attn_clean_fix3072': 'bridge cross-attention, every layer, no bottleneck: K/V straight from the 3072-d video state (30k steps)'}
+DISPLAY_V2 = {'sft_from_scratch_robotwin_clean': 'self_attention_30k', 'cross_attn_clean': 'cross_attention_30k', 'cross_attn_detach_robotwin_clean': 'video_generation_30k', 'cross_attn_clean_fix3072': 'cross_attention_kv3072_30k'}
+_disp = disp
+# success rates of the four 30k-step checkpoints (user, 2026-10-29): self-attention 14 >> cross_attn 4.8 >= detach 4 > fix3072 3
+SUCCESS = dict(SUCCESS, sft_from_scratch_robotwin_clean=14.0, cross_attn_clean=4.8, cross_attn_detach_robotwin_clean=4.0, cross_attn_clean_fix3072=3.0)
+def disp(m):
+    return DISPLAY_V2.get(m, _disp(m))
 esc = html.escape
 
 
@@ -30,6 +43,8 @@ def load():
     for f in sorted(SRC.glob(f'*_{EMB}.npz')):
         z = np.load(f, allow_pickle=True)
         m = str(z['model']).replace('robotwin_dual_system_', '')
+        if m not in ORDER:
+            continue
         out[m] = {k: z[k] for k in z.files}
     return out
 
@@ -45,7 +60,7 @@ def summary_table(D):
         if m not in D:
             rows.append(f'<tr><td><span class="mono">{esc(disp(m))}</span></td><td>{esc(MODE[m])}</td><td class="num partial" colspan="9">pending</td></tr>'); continue
         z = D[m]; kind = str(z['kind']); mv = z['mass_video_frame'].sum(1); ab = z['abl']; fv = z['frac_video']
-        if kind == 'self':
+        if kind in ('self', 'cross_joint'):
             w_video, w_action = f'{mv.mean():.1%}', f'{z["mass_action"].mean():.1%}'
         else:
             w_video, w_action = 'separate softmax', 'separate softmax'

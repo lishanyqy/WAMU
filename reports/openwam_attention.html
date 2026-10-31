@@ -14,7 +14,7 @@ table.lt td, table.lt th { padding: 3px 6px; font-size: 0.78rem; } .mono { font-
 details { margin: 8px 0; } summary { cursor: pointer; }
 </style></head><body><main>
 <h1>How much does the action stream attend to video?</h1>
-<p class="meta">Updated 2026-10-21 01:04 · 276 windows per model (Franka, 2 episodes × 3 windows per task), 828 forwards; video sigma 0.50; action sigmas 0.25, 0.50, 0.75; token grid (3, 12, 10) (frames × rows × cols), head rows 8</p>
+<p class="meta">Updated 2026-10-29 01:46 · 276 windows per model (Franka, 2 episodes × 3 windows per task), 828 forwards; video sigma 0.50; action sigmas 0.25, 0.50, 0.75; token grid (3, 12, 10) (frames × rows × cols), head rows 8</p>
 
 <p>Training-faithful forwards on RoboTwin Franka clips (33-step window, 9 video frames at stride 4 → latent frames, 32 action steps, proprio token) through each checkpoint, with the attention of the action stream instrumented. The question: in the joint self-attention family, how much of the action tokens' attention goes to video, and how does the resulting video influence compare with the bridge cross-attention family?</p>
 

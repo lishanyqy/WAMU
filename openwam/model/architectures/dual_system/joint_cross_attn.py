@@ -44,6 +44,9 @@ def _cross_attn_options(cfg) -> dict:
     options_from_cfg=_cross_attn_options,
 )
 class DualSystemCrossAttnArchitecture(BaseWAMArchitecture):
+    # Subclasses flip this to build the joint-softmax bridge (see cross_attention_softmax.py).
+    _FORCE_BRIDGE_JOINT_SOFTMAX: bool = False
+
     """DualSystem with bridge cross-attention.
 
     Action processing happens **after** the video DiT block loop completes:
@@ -116,6 +119,7 @@ class DualSystemCrossAttnArchitecture(BaseWAMArchitecture):
             text_dim=text_dim,
             shift_action=cfg.get("shift_action"),
             bridge_kv_dim=cfg.get("bridge_kv_dim"),
+            bridge_joint_softmax=bool(cfg.get("bridge_joint_softmax", False)) or self._FORCE_BRIDGE_JOINT_SOFTMAX,
         )
 
     @property

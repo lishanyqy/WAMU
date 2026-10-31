@@ -143,6 +143,7 @@ class BridgeCrossAttention(nn.Module):
         attn_head_dim: int,
         eps: float = 1e-6,
         kv_hidden_dim: Optional[int] = None,
+        joint_action_kv: bool = False,
     ):
         super().__init__()
         kv_hidden_dim = kv_hidden_dim if kv_hidden_dim is not None else hidden_dim
@@ -158,11 +159,23 @@ class BridgeCrossAttention(nn.Module):
         self.o = nn.Linear(self.attn_hidden_dim, hidden_dim)
         self.norm_q = RMSNorm(self.attn_hidden_dim, eps=eps)
         self.norm_k = RMSNorm(self.attn_hidden_dim, eps=eps)
+        # cross_attention_softmax: the query also attends to the action tokens themselves, in the SAME softmax as the
+        # video keys, so an action token can put part of its attention on action instead of always mixing video values.
+        # Action keys/values get their own projections and key norm (their statistics differ from the video bridge).
+        self.joint_action_kv = bool(joint_action_kv)
+        if self.joint_action_kv:
+            self.k_a = nn.Linear(hidden_dim, self.attn_hidden_dim)
+            self.v_a = nn.Linear(hidden_dim, self.attn_hidden_dim)
+            self.norm_k_a = RMSNorm(self.attn_hidden_dim, eps=eps)
 
     def forward(self, x_action: torch.Tensor, x_video: torch.Tensor, ctx_mask: Optional[torch.Tensor] = None):
         q = self.norm_q(self.q(x_action))
         k = self.norm_k(self.k(x_video))
         v = self.v(x_video)
+        if self.joint_action_kv:
+            # keys/values = [action ; video]; one softmax over both (no RoPE: positions are already in the action stream)
+            k = torch.cat([self.norm_k_a(self.k_a(x_action)), k], dim=1)
+            v = torch.cat([self.v_a(x_action), v], dim=1)
 
         q = rearrange(q, "b s (n d) -> b n s d", n=self.num_heads)
         k = rearrange(k, "b s (n d) -> b n s d", n=self.num_heads)
@@ -195,6 +208,7 @@ class CrossAttnActionDiTBlock(nn.Module):
         ffn_dim: int,
         eps: float = 1e-6,
         kv_hidden_dim: Optional[int] = None,
+        bridge_joint_softmax: bool = False,
     ):
         super().__init__()
         self.hidden_dim = hidden_dim
@@ -204,7 +218,9 @@ class CrossAttnActionDiTBlock(nn.Module):
         self.self_attn = ActionSelfAttention(hidden_dim, num_heads, attn_head_dim, eps)
         self.self_attn_norm = nn.LayerNorm(hidden_dim, eps=eps, elementwise_affine=False)
 
-        self.cross_attn = BridgeCrossAttention(hidden_dim, num_heads, attn_head_dim, eps, kv_hidden_dim=kv_hidden_dim)
+        self.cross_attn = BridgeCrossAttention(
+            hidden_dim, num_heads, attn_head_dim, eps, kv_hidden_dim=kv_hidden_dim, joint_action_kv=bridge_joint_softmax
+        )
         self.bridge_attn_norm = nn.LayerNorm(hidden_dim, eps=eps, elementwise_affine=False)
 
         self.context_attn = BridgeCrossAttention(
@@ -381,6 +397,7 @@ class ActionDiT(ActionDiTBackbone):
         attn_head_dim: Optional[int] = None,
         text_dim: int = 4096,
         bridge_kv_dim: Optional[int] = None,
+        bridge_joint_softmax: bool = False,
         freq_dim: int = 256,
         max_action_len: int = 1024,
         eps: float = 1e-6,
@@ -444,6 +461,8 @@ class ActionDiT(ActionDiTBackbone):
         #   None (default) -> dim (the original 3072 -> 1024 -> 3072 path); == video_dim -> no projection at all; any other
         #   value -> Linear(video_dim, bridge_kv_dim) followed by K/V from that width.
         self.bridge_kv_dim = int(bridge_kv_dim) if bridge_kv_dim is not None else dim
+        # cross_attention_softmax: bridge query attends to [action keys ; video keys] in one softmax.
+        self.bridge_joint_softmax = bool(bridge_joint_softmax)
         if variant == "joint_cross_attn":
             if video_dim != self.bridge_kv_dim:
                 self.video_projs = nn.ModuleList([nn.Linear(video_dim, self.bridge_kv_dim) for _ in range(num_layers)])
@@ -478,7 +497,13 @@ class ActionDiT(ActionDiTBackbone):
             )
         else:
             self.blocks = nn.ModuleList(
-                [CrossAttnActionDiTBlock(dim, num_heads, attn_head_dim, ffn_dim, eps, kv_hidden_dim=self.bridge_kv_dim) for _ in range(num_layers)]
+                [
+                    CrossAttnActionDiTBlock(
+                        dim, num_heads, attn_head_dim, ffn_dim, eps,
+                        kv_hidden_dim=self.bridge_kv_dim, bridge_joint_softmax=self.bridge_joint_softmax,
+                    )
+                    for _ in range(num_layers)
+                ]
             )
 
         # FastWAM-compatible simple action decoder; no AdaLN and no zero init.

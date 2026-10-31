@@ -45,16 +45,21 @@ STATE = {}
 
 def load_arch(ckpt_dir: Path, wan_dir: Path, device):
     from openwam.deploy.model_loader import load_from_checkpoint_dir
+    ckpts = sorted(ckpt_dir.glob('checkpoint_step_*.safetensors'), key=lambda p: int(p.stem.split('_')[-1]))
+    if not ckpts:
+        raise SystemExit(f'no checkpoint_step_*.safetensors in {ckpt_dir}')
+    ckpt_file = ckpts[-1]
+    print(f'checkpoint: {ckpt_file.name}', flush=True)
     with tempfile.TemporaryDirectory(prefix='openwam_attn_') as td:
         td = Path(td); cfg = OmegaConf.load(ckpt_dir / 'config.yaml')
         cfg.model.video_backbone.model_path = str(wan_dir); cfg.model.video_backbone.encoder.model_path = str(wan_dir)
         if OmegaConf.select(cfg, 'model.architecture.action_film') is None:
             from safetensors import safe_open
-            with safe_open(str(ckpt_dir / 'checkpoint_step_9890.safetensors'), 'pt') as f:
+            with safe_open(str(ckpt_file), 'pt') as f:
                 has_film = any('action_film' in k for k in f.keys())
             OmegaConf.update(cfg, 'model.architecture.action_film', has_film, force_add=True)
         OmegaConf.save(cfg, td / 'config.yaml')
-        (td / 'checkpoint_step_1.safetensors').symlink_to(ckpt_dir / 'checkpoint_step_9890.safetensors')
+        (td / 'checkpoint_step_1.safetensors').symlink_to(ckpt_file)
         (td / 'normalization_stats.npy').symlink_to(ckpt_dir / 'normalization_stats.npy')
         _, arch = load_from_checkpoint_dir(str(td), device='cpu', ckpt_name='checkpoint_step_1.safetensors')   # CPU first: the shared GPU cannot hold text encoder + DiT at once
     arch.eval()
@@ -64,12 +69,12 @@ def load_arch(ckpt_dir: Path, wan_dir: Path, device):
     return arch, OmegaConf.load(ckpt_dir / 'config.yaml')
 
 
-def make_dataset(cfg, task_root: Path, ckpt_dir: Path, embodiment: str):
+def make_dataset(cfg, task_root: Path, ckpt_dir: Path, embodiment: str, variant: str = 'clean_50'):
     from openwam.dataloader.robotwin import RoboTwinDataset
     dl = OmegaConf.to_container(cfg.dataloader, resolve=True)
     params = inspect.signature(RoboTwinDataset.__init__).parameters
     kw = {k: v for k, v in dl.items() if k in params and k not in ('data_root', 'split', 'embodiment', 'variant', 'color_jitter')}
-    return RoboTwinDataset(str(task_root / f'{embodiment}_clean_50' / 'data'), split='train', embodiment=embodiment, variant='clean_50',
+    return RoboTwinDataset(str(task_root / f'{embodiment}_{variant}' / 'data'), split='train', embodiment=embodiment, variant=variant,
                            normalization_stats_path=str(ckpt_dir / 'normalization_stats.npy'), **kw)
 
 
@@ -162,25 +167,46 @@ def install_cross_attn_hooks(arch):
             xn = x_action.float().norm(dim=-1).clamp_min(1e-6)
             x_action = x_action + upd_sa
             h = self.bridge_attn_norm(x_action) * (1 + scale_ca) + shift_ca
-            upd_ca = gate_ca * self.cross_attn(h, x_video)
+            ca = self.cross_attn
+            joint = getattr(ca, 'joint_action_kv', False)          # cross_attention_softmax
             cut_here = STATE.get('ablate') and li >= STATE.get('ablate_from', 0)
+            if joint and cut_here:
+                # joint-softmax ablation = drop the video keys from the softmax (as the self-attn ablation masks them)
+                qa = rearrange(ca.norm_q(ca.q(h)), 'b s (n d) -> b n s d', n=H); ka = rearrange(ca.norm_k_a(ca.k_a(h)), 'b s (n d) -> b n s d', n=H)
+                va = rearrange(ca.v_a(h), 'b s (n d) -> b n s d', n=H)
+                upd_ca = gate_ca * ca.o(rearrange(torch.nn.functional.scaled_dot_product_attention(qa, ka, va), 'b n s d -> b s (n d)'))
+            else:
+                upd_ca = gate_ca * ca(h, x_video)
             if not STATE.get('ablate'):
-                ca = self.cross_attn
+                Sa_ = h.shape[1]
                 q = rearrange(ca.norm_q(ca.q(h)), 'b s (n d) -> b n s d', n=H).float(); k = rearrange(ca.norm_k(ca.k(x_video)), 'b s (n d) -> b n s d', n=H).float()
-                p = (q @ k.transpose(-1, -2) / math.sqrt(q.shape[-1])).softmax(-1)       # (B, H, Sa, Sv)
+                if joint:
+                    k = torch.cat([rearrange(ca.norm_k_a(ca.k_a(h)), 'b s (n d) -> b n s d', n=H).float(), k], dim=2)
+                p_all = (q @ k.transpose(-1, -2) / math.sqrt(q.shape[-1])).softmax(-1)   # (B, H, Sa, [Sa +] Sv)
+                p = p_all[..., Sa_:] if joint else p_all                                 # weight on the video keys
                 by_frame, head, wrist = video_split(p, STATE['grid'], STATE['head_rows'])
                 rec = STATE['rec'][li]
                 bf = by_frame.mean((0, 1, 2)).cpu().numpy(); rec['mass_video_frame'] = rec['mass_video_frame'][:len(bf)] + bf
                 rec['mass_head'] += float(head.mean()); rec['mass_wrist'] += float(wrist.mean())
-                rec['mass_action'] += 0.0
+                rec['mass_action'] += float(p_all[..., :Sa_].sum(-1).mean()) if joint else 0.0
                 rec['head_video'] += p.sum(-1).mean((0, 2)).cpu().numpy()
-                rec['entropy'] += float(entropy(p).mean())
+                rec['entropy'] += float(entropy(p_all).mean())
                 rec['mass_video_query'] += p.sum(-1).mean((0, 1)).cpu().numpy()
                 xn2 = x_action.float().norm(dim=-1).clamp_min(1e-6)
-                rec['r_video'] += float((upd_ca.float().norm(dim=-1) / xn2).mean()); rec['r_attn'] += float((upd_sa.float().norm(dim=-1) / xn).mean())
-                rec['frac_video'] += float((upd_ca.float().norm(dim=-1) / (upd_ca.float().norm(dim=-1) + upd_sa.float().norm(dim=-1)).clamp_min(1e-6)).mean())
+                if joint:
+                    # video-key part of the bridge update (o is linear: subtract its bias once)
+                    vv = rearrange(ca.v(x_video), 'b s (n d) -> b n s d', n=H).float()
+                    upd_v = (gate_ca * (ca.o(rearrange((p @ vv).to(h.dtype), 'b n s d -> b s (n d)')) - ca.o.bias)).float()
+                    upd_a = upd_ca.float() - upd_v
+                    nv = upd_v.norm(dim=-1); na = upd_a.norm(dim=-1) + upd_sa.float().norm(dim=-1)
+                    rec['r_video'] += float((nv / xn2).mean())
+                    rec['frac_video'] += float((nv / (nv + na).clamp_min(1e-6)).mean())
+                else:
+                    rec['r_video'] += float((upd_ca.float().norm(dim=-1) / xn2).mean())
+                    rec['frac_video'] += float((upd_ca.float().norm(dim=-1) / (upd_ca.float().norm(dim=-1) + upd_sa.float().norm(dim=-1)).clamp_min(1e-6)).mean())
+                rec['r_attn'] += float((upd_sa.float().norm(dim=-1) / xn).mean())
                 x_action = x_action + upd_ca
-            elif not cut_here:
+            elif joint or not cut_here:
                 x_action = x_action + upd_ca
             if context is not None:
                 x_action = x_action + self.context_attn(self.context_attn_norm(x_action), context, ctx_mask=context_mask)
@@ -276,6 +302,9 @@ def main():
     p.add_argument('--ckpt-dir', type=Path, required=True); p.add_argument('--wan-dir', type=Path, default=Path('assets/video_backbone_ckpt/Wan2.2-TI2V-5B'))
     p.add_argument('--dataset-dir', type=Path, default=Path('/home/a1905721/dataspace/robotwin2.0/dataset'))
     p.add_argument('--embodiment', default='franka'); p.add_argument('--episodes-per-task', type=int, default=2); p.add_argument('--windows', type=int, default=3)
+    p.add_argument('--variant', default='clean_50', help='RoboTwin data variant folder suffix: clean_50 | randomized_500')
+    p.add_argument('--samples-per-task', type=int, default=0, help='>0: draw this many random (episode, window) pairs per task instead of episodes-per-task x windows')
+    p.add_argument('--tag', default=None, help='label used in the output file name (default: embodiment)')
     p.add_argument('--limit-tasks', type=int, default=0); p.add_argument('--action-t', type=float, nargs='+', default=[0.25, 0.75])
     p.add_argument('--video-sigma', type=float, default=0.5); p.add_argument('--seed', type=int, default=0); p.add_argument('--device', default='cuda')
     p.add_argument('--output', type=Path, default=None)
@@ -283,9 +312,10 @@ def main():
     p.add_argument('--decode-layers', type=int, nargs='*', default=[], help='logit lens: decode the action stream after these layers with the final action decoder')
     a = p.parse_args()
     name = a.ckpt_dir.name
-    out = a.output or Path(f'artifacts/attention/{name}_{a.embodiment}.npz')
+    tag = a.tag or a.embodiment
+    out = a.output or Path(f'artifacts/attention/{name}_{tag}.npz')
     arch, cfg = load_arch(a.ckpt_dir, a.wan_dir, a.device)
-    kind = 'self' if 'SelfAttn' in type(arch).__name__ else 'cross' if 'CrossAttn' in type(arch).__name__ else None
+    kind = 'self' if 'SelfAttn' in type(arch).__name__ else (('cross_joint' if 'Softmax' in type(arch).__name__ else 'cross') if 'CrossAttn' in type(arch).__name__ else None)
     if kind is None:
         raise SystemExit(f'{type(arch).__name__}: not a self/cross-attention dual system')
     height = int(cfg.dataloader.height); top_h = int(round(height * 2 / 3))
@@ -298,11 +328,20 @@ def main():
     act_ids = [int((asched.sigmas - t).abs().argmin()) for t in a.action_t]
     print(f'{name}: {kind}-attention, {L} layers, {H} heads; video sigma {float(vsched.sigmas[vid_id]):.3f}; action sigmas {[round(float(asched.sigmas[i]), 3) for i in act_ids]}', flush=True)
 
-    tasks = sorted(d for d in a.dataset_dir.iterdir() if (d / f'{a.embodiment}_clean_50' / 'data').is_dir())
+    tasks = sorted(d for d in a.dataset_dir.iterdir() if (d / f'{a.embodiment}_{a.variant}' / 'data').is_dir())
     tasks = tasks[:a.limit_tasks] if a.limit_tasks else tasks
     samples = []
     for task in tasks:
-        ds = make_dataset(cfg, task, a.ckpt_dir, a.embodiment)
+        ds = make_dataset(cfg, task, a.ckpt_dir, a.embodiment, a.variant)
+        if a.samples_per_task > 0:
+            # random (episode, start) pairs among the full windows of this task, seeded per task so every model sees the same draws
+            rng = np.random.default_rng(a.seed * 1000 + sum(map(ord, task.name)))
+            pool = [(ep, st) for ep, st in ds._window_index if st <= ds._episode_lengths[ep] - ds._raw_window_len]
+            for i in rng.choice(len(pool), size=min(a.samples_per_task, len(pool)), replace=False):
+                ep, start = pool[int(i)]
+                # lazy: only the prompt is kept now (RAM on a shared node); the clip is rebuilt when its window is processed
+                samples.append((task.name, ep, start, {'_ds': ds, 'prompt': ds._build_sample(ep, start)['prompt']}))
+            continue
         for ep in range(min(a.episodes_per_task, len(ds._episode_files))):
             ep_len = ds._episode_lengths[ep]; max_start = max(0, ep_len - ds._raw_window_len)
             for w in range(a.windows):
@@ -315,6 +354,8 @@ def main():
     g = torch.Generator(device=a.device).manual_seed(a.seed)
     for task_name, ep, start, sample in samples:
         task = Path(task_name)
+        if '_ds' in sample:
+            prompt = sample['prompt']; sample = sample['_ds']._build_sample(ep, start); sample['prompt'] = prompt   # same (cached) prompt
         if True:
             if True:
                 def one_window():
@@ -385,7 +426,7 @@ def main():
     keys = list(rec_sum[0].keys())
     per_layer = {k: np.stack([np.asarray(rec_sum[l][k]) / n_rec for l in range(L)]) for k in keys}
     abl_arr = np.array([r[3:] for r in abl], np.float64)
-    np.savez(out, kind=kind, model=name, embodiment=a.embodiment, n_forwards=n_rec, n_windows=n_samples, grid=np.array(STATE['grid']), head_rows=STATE['head_rows'],
+    np.savez(out, kind=kind, model=name, embodiment=a.embodiment, variant=a.variant, samples_per_task=a.samples_per_task, n_forwards=n_rec, n_windows=n_samples, grid=np.array(STATE['grid']), head_rows=STATE['head_rows'],
              action_sigmas=np.array([float(asched.sigmas[i]) for i in act_ids]), video_sigma=float(vsched.sigmas[vid_id]),
              abl_meta=np.array([(r[0], r[1], r[2]) for r in abl], dtype=object), abl=abl_arr, lens=np.array(lens, np.float64).reshape(-1, 6),
              lens_cols=np.array(['action_sigma', 'layer', 'nmse_with', 'nmse_without', 'vel_change', 'dist_to_final']),
