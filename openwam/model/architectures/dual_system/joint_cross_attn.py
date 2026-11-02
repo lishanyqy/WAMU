@@ -17,6 +17,7 @@ from torch import Tensor
 from openwam.model.action_backbone.separate_action_dit import ActionDiT
 from openwam.model.architectures.base import BaseWAMArchitecture
 from openwam.model.architectures.registry import _cfg_get, register_architecture
+from openwam.model.architectures.utils.bridge_noise import BridgeNoiseConfig, apply_plan, make_plan
 from openwam.model.architectures.utils.common import resolve_bridge_layers
 from openwam.model.compile_options import (
     compile_enabled,
@@ -58,6 +59,7 @@ class DualSystemCrossAttnArchitecture(BaseWAMArchitecture):
         super().__init__(cfg)
         self._detach_bridge: bool = False
         self._action_video_attention_mode: str = "all_frames"
+        self._bridge_noise: BridgeNoiseConfig = BridgeNoiseConfig()
         self._compiled_action_forward: Optional[Callable[..., Tensor]] = None
         if cfg is None:
             return
@@ -83,6 +85,10 @@ class DualSystemCrossAttnArchitecture(BaseWAMArchitecture):
         text_dim = int(self._cfg_get(cfg, "text_dim", _vb_text_dim or 4096))
         self._init_proprio_context(cfg, text_dim=text_dim)
         self._detach_bridge = bool(cfg.get("detach_bridge", False))
+        # Training-only corruption of the bridge copy the action stream reads (see utils/bridge_noise.py).
+        self._bridge_noise = BridgeNoiseConfig.from_cfg(cfg.get("bridge_noise"))
+        if self._bridge_noise.enabled:
+            logger.info("cross-attn bridge noise enabled for training: %s", self._bridge_noise)
         self._action_video_attention_mode = str(cfg.get("action_video_attention_mode", "all_frames"))
         if self._action_video_attention_mode not in {"all_frames", "first_frame"}:
             raise ValueError(
@@ -247,6 +253,7 @@ class DualSystemCrossAttnArchitecture(BaseWAMArchitecture):
         bridge_set = frozenset(ab.bridge_layers)
         bridges: dict[int, Tensor] = {}
         detach_bridge = self._detach_bridge
+        bridge_grid: Optional[Tuple[int, int, int]] = None   # (frames, height, width) of the bridge tokens
 
         for block_id in range(vb.num_layers):
             vstate = vb.run_block(block_id, vstate)
@@ -259,7 +266,9 @@ class DualSystemCrossAttnArchitecture(BaseWAMArchitecture):
                     B5, T5, H5, W5, D5 = bridge.shape
                     if self._action_video_attention_mode == "first_frame":
                         bridge = bridge[:, :1]
+                        T5 = 1
                     bridge = bridge.reshape(B5, T5 * H5 * W5, D5)
+                    bridge_grid = (T5, H5, W5)
                 elif self._action_video_attention_mode == "first_frame":
                     tokens_per_frame = int(vstate.grid_height) * int(vstate.grid_width)
                     if tokens_per_frame <= 0:
@@ -268,11 +277,20 @@ class DualSystemCrossAttnArchitecture(BaseWAMArchitecture):
                             f"with grid_height={vstate.grid_height}, grid_width={vstate.grid_width}."
                         )
                     bridge = bridge[:, :tokens_per_frame]
+                    bridge_grid = (1, int(vstate.grid_height), int(vstate.grid_width))
+                else:
+                    bridge_grid = (int(vstate.grid_frames), int(vstate.grid_height), int(vstate.grid_width))
                 bridges[block_id] = bridge.detach() if detach_bridge else bridge
 
         video_pred = vb.finalize(vstate)
         if not bridges:
             return video_pred, None
+
+        if self.training and self._bridge_noise.enabled:
+            # one token plan per sample, shared by every bridge layer; only the action stream's copy is corrupted
+            first = next(iter(bridges.values()))
+            plan = make_plan(first.shape[0], bridge_grid, self._bridge_noise, device=first.device)
+            bridges = {bid: apply_plan(b, plan) for bid, b in bridges.items()}
 
         action_pred = self._predict_actions_from_bridges(
             noisy_actions,
