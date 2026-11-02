@@ -12,6 +12,8 @@ The driver owns no parameters — a plain Python class, absent from ``state_dict
 
 from __future__ import annotations
 
+import logging
+
 import copy
 from typing import TYPE_CHECKING, Callable, Optional, Tuple
 
@@ -34,6 +36,8 @@ if TYPE_CHECKING:
     from openwam.model.architectures.base import ActionState
     from openwam.model.video_backbone.base import BlockLoopState, VideoBackbone
 
+
+logger = logging.getLogger(__name__)
 
 class DualSystemMoTDriver:
     """Drives joint self-attention across a video backbone and an action backbone.
@@ -66,6 +70,7 @@ class DualSystemMoTDriver:
         attention_mask_mode: str = ACTION_SEES_VIDEO,
         video_attention_mask_mode: Optional[str] = None,
         video_film: Optional[Callable[[Tensor, Tensor], Tensor]] = None,
+        detach_video: bool = False,
     ) -> None:
         if vb.num_layers != ab.num_layers:
             raise ValueError(
@@ -92,6 +97,17 @@ class DualSystemMoTDriver:
         self.mot_checkpoint_mixed_attn = bool(mot_checkpoint_mixed_attn)
         self.attention_mask_mode = attention_mask_mode
         self.video_film = video_film
+        # cfg.model.architecture.detach_video: the action rows read the video K/V through a stop-gradient, so the action
+        # loss never reaches the video DiT (the self-attention analogue of joint_cross_attn's detach_bridge). The video
+        # rows still use the live K/V, so the video loss trains the video DiT exactly as before.
+        self.detach_video = bool(detach_video)
+        if self.detach_video and attention_mask_mode != ACTION_SEES_VIDEO:
+            logger.warning(
+                "detach_video=True with attention_mask_mode=%r: video rows also attend to action here, so the VIDEO "
+                "loss still trains the action stream; only the action-loss -> video path is cut. Use "
+                "'action_sees_video' for a fully one-way coupling.",
+                attention_mask_mode,
+            )
 
         # Allow the architecture / config to override the video v↔v sub-mode.
         # When None we defer to whatever ``vb.video_attention_mask_mode`` reports.
@@ -250,6 +266,19 @@ class DualSystemMoTDriver:
             mixed = self._mixed_attention(q_cat, k_cat, v_cat, attn_mask)
 
         attn_v, attn_a = mixed.split([s_video, s_action], dim=1)
+
+        if self.detach_video:
+            # Recompute only the action rows with the video K/V detached; same keys, same mask rows, same softmax, so the
+            # forward values equal ``attn_a`` above and only the gradient path into the video DiT is removed.
+            k_cat_d = torch.cat([k_v.detach(), k_a], dim=1)
+            v_cat_d = torch.cat([v_v.detach(), v_a], dim=1)
+            mask_a = attn_mask[..., s_video:, :] if attn_mask is not None else None
+            if self.mot_checkpoint_mixed_attn and ab.training and not suppress_inner_attn_ckpt:
+                attn_a = torch.utils.checkpoint.checkpoint(
+                    self._mixed_attention, q_a, k_cat_d, v_cat_d, mask_a, use_reentrant=False
+                )
+            else:
+                attn_a = self._mixed_attention(q_a, k_cat_d, v_cat_d, mask_a)
 
         if self.video_film is not None:
             film = self.video_film

@@ -114,7 +114,7 @@ def install_self_attn_hooks(arch):
 
     def mixed(q, k, v, attn_mask):
         out = orig_mixed(q, k, v, attn_mask)
-        if STATE.get('ablate'):
+        if STATE.get('ablate') or q.shape[1] != k.shape[1]:   # second, action-rows-only call of a detach_video model
             return out
         B, S, _ = q.shape; Fr, gh, gw = STATE['grid']; Sv = Fr * gh * gw; Sa = S - Sv
         qa = q[:, Sv:].reshape(B, Sa, H, Dh).transpose(1, 2).float()

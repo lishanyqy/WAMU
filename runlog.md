@@ -67,6 +67,21 @@ torchrun --nproc_per_node=4 scripts/train.py \
   training.output_path=/scratch/ou29/rz6525/WAMU/WAMU/outputs/cross_attention_softmax
 ```
 
+
+### 2026-11-02 (v1.3)
+joint-self attn for video detached from action
+```bash
+# Activate your environment
+conda activate openwam
+# export your robotwin data env
+export OPEN_WAM_ROBOTWIN_DATA=/path/to/robotwin2.0/dataset
+torchrun --nproc_per_node=4 scripts/train.py \
+  --config-name train_robotwin_clean_self_attn_detach_video.yaml \
+  model.video_backbone.model_path=assets/video_backbone_ckpt/Wan2.2-TI2V-5B \
+  training.output_path=/scratch/ou29/rz6525/WAMU/WAMU/outputs/self-attn-detach
+```
+
+
 ### 2026-10-22 (v2.0) 
 bug fix for v1.0, they have a apparent bug that might impact on the the cross-attention architecture.
 ```bash

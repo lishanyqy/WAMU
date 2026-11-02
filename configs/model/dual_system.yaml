@@ -49,4 +49,5 @@ architecture:
 
   mot_checkpoint_mixed_attn: true  # joint_self_attn/idm only: grad-checkpoint the mixed attention (VRAM down)
   detach_bridge: false             # joint_cross_attn only
+  detach_video: false              # joint_self_attn only: action rows read video K/V through a stop-gradient (action loss never reaches the video DiT)
   idm_video_cond_noise_prob: 0.5   # idm only

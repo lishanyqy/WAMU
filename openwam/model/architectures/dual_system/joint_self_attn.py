@@ -137,6 +137,7 @@ class DualSystemSelfAttnArchitecture(BaseWAMArchitecture):
             "attention_mask_mode": str(cfg.get("attention_mask_mode", ACTION_SEES_VIDEO)),
             "video_attention_mask_mode": str(cfg.get("video_attention_mask_mode", "first_frame_causal")),
             "video_film": self.action_film if self.action_film_enabled else None,
+            "detach_video": bool(cfg.get("detach_video", False)),
         }
         if self.video_backbone is not None:
             self.build_mot_driver()
