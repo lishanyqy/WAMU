@@ -190,6 +190,36 @@ class BridgeCrossAttention(nn.Module):
         return self.o(x)
 
 
+class DirectVideoCrossAttention(nn.Module):
+    """Cross-attention from action tokens straight onto the video DiT's OWN keys/values (``cross_attention_direct``).
+
+    Unlike :class:`BridgeCrossAttention` there is no video-side projection here: ``k_video`` / ``v_video`` are exactly
+    the K/V the video DiT's self-attention uses at that layer (``self_attn.k`` / ``.v`` after its key RMSNorm and 3D
+    RoPE, as returned by ``video_backbone.pre_attn_at_layer``). Only the action query and the output projection are
+    new, so ``num_heads * attn_head_dim`` must equal the video attention width with the same head split. The query has
+    no RoPE (it has no position on the video grid), as in the bridge cross-attention.
+    """
+
+    def __init__(self, hidden_dim: int, num_heads: int, attn_head_dim: int, eps: float = 1e-6):
+        super().__init__()
+        self.hidden_dim = hidden_dim
+        self.num_heads = num_heads
+        self.attn_head_dim = attn_head_dim
+        self.attn_hidden_dim = num_heads * attn_head_dim
+        self.q = nn.Linear(hidden_dim, self.attn_hidden_dim)
+        self.o = nn.Linear(self.attn_hidden_dim, hidden_dim)
+        self.norm_q = RMSNorm(self.attn_hidden_dim, eps=eps)
+
+    def forward(self, x_action: torch.Tensor, k_video: torch.Tensor, v_video: torch.Tensor):
+        q = self.norm_q(self.q(x_action))
+        q = rearrange(q, "b s (n d) -> b n s d", n=self.num_heads)
+        k = rearrange(k_video, "b s (n d) -> b n s d", n=self.num_heads)
+        v = rearrange(v_video, "b s (n d) -> b n s d", n=self.num_heads)
+        x = get_attention_fn()(q, k, v)
+        x = rearrange(x, "b n s d -> b s (n d)", n=self.num_heads)
+        return self.o(x)
+
+
 class CrossAttnActionDiTBlock(nn.Module):
     """Single ActionDiT block for the cross_attn variant.
 
@@ -209,18 +239,24 @@ class CrossAttnActionDiTBlock(nn.Module):
         eps: float = 1e-6,
         kv_hidden_dim: Optional[int] = None,
         bridge_joint_softmax: bool = False,
+        direct_video_kv: bool = False,
     ):
         super().__init__()
         self.hidden_dim = hidden_dim
         self.num_heads = num_heads
         self.attn_head_dim = attn_head_dim
+        self.direct_video_kv = bool(direct_video_kv)
 
         self.self_attn = ActionSelfAttention(hidden_dim, num_heads, attn_head_dim, eps)
         self.self_attn_norm = nn.LayerNorm(hidden_dim, eps=eps, elementwise_affine=False)
 
-        self.cross_attn = BridgeCrossAttention(
-            hidden_dim, num_heads, attn_head_dim, eps, kv_hidden_dim=kv_hidden_dim, joint_action_kv=bridge_joint_softmax
-        )
+        if self.direct_video_kv:
+            # cross_attention_direct: read the video DiT's own K/V, no bridge projection
+            self.cross_attn = DirectVideoCrossAttention(hidden_dim, num_heads, attn_head_dim, eps)
+        else:
+            self.cross_attn = BridgeCrossAttention(
+                hidden_dim, num_heads, attn_head_dim, eps, kv_hidden_dim=kv_hidden_dim, joint_action_kv=bridge_joint_softmax
+            )
         self.bridge_attn_norm = nn.LayerNorm(hidden_dim, eps=eps, elementwise_affine=False)
 
         self.context_attn = BridgeCrossAttention(
@@ -249,7 +285,9 @@ class CrossAttnActionDiTBlock(nn.Module):
         freqs: Optional[torch.Tensor] = None,
         context: Optional[torch.Tensor] = None,
         context_mask: Optional[torch.Tensor] = None,
+        x_video_v: Optional[torch.Tensor] = None,
     ):
+        """``x_video``: bridge features, or under ``direct_video_kv`` the video keys with ``x_video_v`` the values."""
         (shift_sa, scale_sa, gate_sa, shift_ca, scale_ca, gate_ca, shift_ff, scale_ff, gate_ff) = (
             self.modulation.to(dtype=t_mod.dtype, device=t_mod.device) + t_mod
         ).chunk(9, dim=1)
@@ -258,7 +296,10 @@ class CrossAttnActionDiTBlock(nn.Module):
         x_action = x_action + gate_sa * self.self_attn(h, freqs=freqs)
 
         h = self.bridge_attn_norm(x_action) * (1 + scale_ca) + shift_ca
-        x_action = x_action + gate_ca * self.cross_attn(h, x_video)
+        if self.direct_video_kv:
+            x_action = x_action + gate_ca * self.cross_attn(h, x_video, x_video_v)
+        else:
+            x_action = x_action + gate_ca * self.cross_attn(h, x_video)
 
         if context is not None:
             x_action = x_action + self.context_attn(self.context_attn_norm(x_action), context, ctx_mask=context_mask)
@@ -398,6 +439,7 @@ class ActionDiT(ActionDiTBackbone):
         text_dim: int = 4096,
         bridge_kv_dim: Optional[int] = None,
         bridge_joint_softmax: bool = False,
+        direct_video_kv: bool = False,
         freq_dim: int = 256,
         max_action_len: int = 1024,
         eps: float = 1e-6,
@@ -463,7 +505,13 @@ class ActionDiT(ActionDiTBackbone):
         self.bridge_kv_dim = int(bridge_kv_dim) if bridge_kv_dim is not None else dim
         # cross_attention_softmax: bridge query attends to [action keys ; video keys] in one softmax.
         self.bridge_joint_softmax = bool(bridge_joint_softmax)
-        if variant == "joint_cross_attn":
+        # cross_attention_direct: the bridge attention reads the video DiT's own K/V; no video_projs, no bridge K/V.
+        self.direct_video_kv = bool(direct_video_kv)
+        if self.direct_video_kv and variant != "joint_cross_attn":
+            raise ValueError("direct_video_kv is only defined for the cross-attention action DiT (variant='joint_cross_attn').")
+        if self.direct_video_kv and self.bridge_joint_softmax:
+            raise ValueError("direct_video_kv and bridge_joint_softmax cannot be combined.")
+        if variant == "joint_cross_attn" and not self.direct_video_kv:
             if video_dim != self.bridge_kv_dim:
                 self.video_projs = nn.ModuleList([nn.Linear(video_dim, self.bridge_kv_dim) for _ in range(num_layers)])
             else:
@@ -501,6 +549,7 @@ class ActionDiT(ActionDiTBackbone):
                     CrossAttnActionDiTBlock(
                         dim, num_heads, attn_head_dim, ffn_dim, eps,
                         kv_hidden_dim=self.bridge_kv_dim, bridge_joint_softmax=self.bridge_joint_softmax,
+                        direct_video_kv=self.direct_video_kv,
                     )
                     for _ in range(num_layers)
                 ]
@@ -625,6 +674,26 @@ class ActionDiT(ActionDiTBackbone):
                 f"bridge_tuple length ({len(bridge_tuple)}) must match bridge_layers={self._bridge_layers}."
             )
 
+        if self.direct_video_kv:
+            width = self._num_heads * self._head_dim
+            for i, kv in enumerate(bridge_tuple):
+                if not isinstance(kv, (tuple, list)) or len(kv) != 2:
+                    raise ValueError(
+                        f"direct_video_kv: bridge entry for video block {self._bridge_layers[i]} must be a (k, v) pair."
+                    )
+                for name, t in zip(("k", "v"), kv):
+                    if t.ndim != 3 or t.shape[0] != x.shape[0] or t.shape[-1] != width:
+                        raise ValueError(
+                            f"direct_video_kv: video {name} for block {self._bridge_layers[i]} must be "
+                            f"[B={x.shape[0]}, S, num_heads*head_dim={width}], got {tuple(t.shape)}."
+                        )
+                    if t.device != x.device or t.dtype != x.dtype:
+                        raise RuntimeError(
+                            f"direct_video_kv: video {name} at action block {i} is {t.dtype}@{t.device}, "
+                            f"actions are {x.dtype}@{x.device}."
+                        )
+            return
+
         for i, bridge in enumerate(bridge_tuple):
             if bridge.ndim != 3:
                 raise ValueError(
@@ -680,6 +749,22 @@ class ActionDiT(ActionDiTBackbone):
         )
 
         for i, block in enumerate(self.blocks):
+            if self.direct_video_kv:
+                # cross_attention_direct: the video DiT's own (k, v) at this layer, no projection
+                k_video_i, v_video_i = bridge_tuple[i]
+                x = gradient_checkpoint_forward(
+                    block,
+                    self.training and use_gradient_checkpointing,
+                    use_gradient_checkpointing_offload,
+                    x,
+                    k_video_i,
+                    t_mod,
+                    freqs,
+                    context_emb,
+                    context_attn_mask,
+                    v_video_i,
+                )
+                continue
             x_video_i = self.video_projs[i](bridge_tuple[i])
             x = gradient_checkpoint_forward(
                 block,

@@ -913,3 +913,67 @@ def test_backbone_name_path_check_silent_when_name_missing(caplog):
         _warn_on_name_path_mismatch(None, "/path/to/Wan2.2-TI2V-5B")
         _warn_on_name_path_mismatch("", "/path/to/Wan2.2-TI2V-5B")
     assert not any("looks inconsistent" in r.message for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# dual_system_cross_attn_direct: action cross-attn reads the video DiT's own K/V
+# ---------------------------------------------------------------------------
+
+
+def _direct_cfg(**over):
+    cfg = {
+        "framework": "dual_system",
+        "variant": "cross_attention_direct",
+        "action_dim": ACTION_DIM,
+        "bridge_layers": None,
+        "bridge_interval": 1,
+        "dim": 256,
+        "ffn_dim": 1024,
+        "num_heads": 4,
+        "attn_head_dim": WAN_VIDEO_DIM // 4,
+    }
+    cfg.update(over)
+    return cfg
+
+
+def test_dual_system_cross_attn_direct_has_no_bridge_projection_and_runs():
+    from openwam.model.action_backbone.separate_action_dit import DirectVideoCrossAttention
+
+    arch = _build_arch("dual_system_cross_attn_direct", _direct_cfg())
+    ab = arch.action_backbone
+    assert len(ab.bridge_layers) == WAN_NUM_LAYERS
+    assert not hasattr(ab, "video_projs")
+    for block in ab.blocks:
+        assert isinstance(block.cross_attn, DirectVideoCrossAttention)
+        assert not hasattr(block.cross_attn, "k") and not hasattr(block.cross_attn, "v")
+    out = _run_compute_loss(arch)
+    for k in ("loss", "loss_video", "loss_action"):
+        assert torch.isfinite(out[k])
+    out["loss"].backward()
+    assert ab.blocks[0].cross_attn.q.weight.grad is not None
+
+
+def test_dual_system_cross_attn_direct_rejects_head_mismatch():
+    # the mock video backbone takes num_heads from the cfg (8 heads x 8 dims); the action side asks for 8 x 16
+    arch = _build_arch("dual_system_cross_attn_direct", _direct_cfg(num_heads=8, attn_head_dim=16))
+    with pytest.raises(ValueError, match="same head split"):
+        _run_compute_loss(arch)
+
+
+def test_dual_system_cross_attn_direct_rejects_joint_softmax():
+    from openwam.model import build_architecture
+
+    cfg = _direct_cfg(bridge_joint_softmax=True, video_dim=WAN_VIDEO_DIM, num_dit_layers=WAN_NUM_LAYERS)
+    with pytest.raises(ValueError):
+        build_architecture("dual_system_cross_attn_direct", cfg)
+
+
+def test_dual_system_cross_attn_unchanged_by_direct_variant():
+    """The original cross_attn keeps its bridge projections and parameter names."""
+    from openwam.model.action_backbone.separate_action_dit import BridgeCrossAttention
+
+    arch = _build_arch("dual_system_cross_attn", _direct_cfg(variant="joint_cross_attn"))
+    ab = arch.action_backbone
+    assert hasattr(ab, "video_projs") and not ab.direct_video_kv
+    assert all(isinstance(b.cross_attn, BridgeCrossAttention) for b in ab.blocks)
+    assert "blocks.0.cross_attn.k.weight" in ab.state_dict()

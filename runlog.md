@@ -99,7 +99,19 @@ torchrun --nproc_per_node=4 scripts/train.py \
 ```
 # self-attention + bridge noise (recipe of self_attention_30k / sft_from_scratch_robotwin_clean: grad accum 1)
 
-
+### 2026-11-06 (v1.5)
+Which cross attention video token is using projections from video.
+```bash
+# Activate your environment
+conda activate openwam
+# export your robotwin data env
+export OPEN_WAM_ROBOTWIN_DATA=/path/to/robotwin2.0/dataset
+# cross-attention + direct projection
+torchrun --nproc_per_node=4 scripts/train.py \
+  --config-name train_robotwin_clean_cross_attention_direct.yaml \
+  model.video_backbone.model_path=assets/video_backbone_ckpt/Wan2.2-TI2V-5B \
+  training.output_path=/scratch/ou29/rz6525/WAMU/WAMU/outputs/cross_attn_direct
+```
 
 ### 2026-10-22 (v2.0) 
 bug fix for v1.0, they have a apparent bug that might impact on the the cross-attention architecture.

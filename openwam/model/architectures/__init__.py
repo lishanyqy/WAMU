@@ -4,6 +4,7 @@ from openwam.model.architectures import dual_system, single_system, tri_system  
 from openwam.model.architectures.base import ActionState, BaseWAMArchitecture
 from openwam.model.architectures.dual_system import (
     DualSystemCrossAttnArchitecture,
+    DualSystemCrossAttnDirectArchitecture,
     DualSystemCrossAttnSoftmaxArchitecture,
     DualSystemIDMArchitecture,
     DualSystemSelfAttnArchitecture,
@@ -40,6 +41,7 @@ __all__ = [
     "register_architecture",
     "resolve_architecture_config",
     "DualSystemCrossAttnArchitecture",
+    "DualSystemCrossAttnDirectArchitecture",
     "DualSystemCrossAttnSoftmaxArchitecture",
     "DualSystemIDMArchitecture",
     "DualSystemSelfAttnArchitecture",

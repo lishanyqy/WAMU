@@ -13,11 +13,13 @@ Three variants split into independent classes:
 from openwam.model.architectures.dual_system.idm import DualSystemIDMArchitecture
 from openwam.model.architectures.dual_system.joint_cross_attn import DualSystemCrossAttnArchitecture
 from openwam.model.architectures.dual_system.cross_attention_softmax import DualSystemCrossAttnSoftmaxArchitecture
+from openwam.model.architectures.dual_system.cross_attention_direct import DualSystemCrossAttnDirectArchitecture
 from openwam.model.architectures.dual_system.joint_self_attn import DualSystemSelfAttnArchitecture
 
 __all__ = [
     "DualSystemCrossAttnArchitecture",
     "DualSystemCrossAttnSoftmaxArchitecture",
+    "DualSystemCrossAttnDirectArchitecture",
     "DualSystemSelfAttnArchitecture",
     "DualSystemIDMArchitecture",
 ]
