@@ -101,6 +101,9 @@ class DualSystemMoTDriver:
         # loss never reaches the video DiT (the self-attention analogue of joint_cross_attn's detach_bridge). The video
         # rows still use the live K/V, so the video loss trains the video DiT exactly as before.
         self.detach_video = bool(detach_video)
+        # bridge_noise plan for the current forward (set by the architecture; None = clean). Per-forward state, read by
+        # every layer and reproduced exactly by gradient-checkpoint recomputation (the plan is deterministic).
+        self.noise_plan = None
         if self.detach_video and attention_mask_mode != ACTION_SEES_VIDEO:
             logger.warning(
                 "detach_video=True with attention_mask_mode=%r: video rows also attend to action here, so the VIDEO "
@@ -267,11 +270,23 @@ class DualSystemMoTDriver:
 
         attn_v, attn_a = mixed.split([s_video, s_action], dim=1)
 
-        if self.detach_video:
-            # Recompute only the action rows with the video K/V detached; same keys, same mask rows, same softmax, so the
-            # forward values equal ``attn_a`` above and only the gradient path into the video DiT is removed.
-            k_cat_d = torch.cat([k_v.detach(), k_a], dim=1)
-            v_cat_d = torch.cat([v_v.detach(), v_a], dim=1)
+        # training only: a plan left over from the last training forward must never touch eval / generate
+        plan = self.noise_plan if (self.noise_plan is not None and ab.training and self.noise_plan.active()) else None
+        if self.detach_video or plan is not None:
+            # Recompute only the action rows. detach_video: video K/V through a stop-gradient (same forward values).
+            # bridge_noise: the action rows read K/V computed from a CORRUPTED copy of this layer's video hidden state
+            # (same norm, modulation, projection and 3D RoPE as the clean ones); the video rows above keep the clean K/V,
+            # so the video DiT and the video loss are unaffected.
+            k_src, v_src = k_v, v_v
+            if plan is not None:
+                hs = vstate.hidden_states
+                noisy_state = copy.copy(vstate)
+                noisy_state.hidden_states = plan.apply(hs, layer_id) if hs.ndim == 3 else plan.apply(hs.flatten(1, -2), layer_id).view_as(hs)
+                _, k_src, v_src, _ = vb.pre_attn_at_layer(layer_id, noisy_state)
+            if self.detach_video:
+                k_src, v_src = k_src.detach(), v_src.detach()
+            k_cat_d = torch.cat([k_src, k_a], dim=1)
+            v_cat_d = torch.cat([v_src, v_a], dim=1)
             mask_a = attn_mask[..., s_video:, :] if attn_mask is not None else None
             if self.mot_checkpoint_mixed_attn and ab.training and not suppress_inner_attn_ckpt:
                 attn_a = torch.utils.checkpoint.checkpoint(

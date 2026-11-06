@@ -81,6 +81,25 @@ torchrun --nproc_per_node=4 scripts/train.py \
   training.output_path=/scratch/ou29/rz6525/WAMU/WAMU/outputs/self-attn-detach
 ```
 
+### 2026-11-03 (v1.4)
+bridge noise (wamu/bridge_noise_plan.md): during training only, corrupt the video features the ACTION stream reads
+(70% of samples, 10-20% of video tokens in 2x2 blocks, Gaussian or token swap, same tokens in every layer, same plan for
+both architectures). Cross-attention: the bridge features; self-attention: the video K/V of the action rows (video rows
+and the video loss stay clean). Each run keeps its baseline recipe; the only change is `bridge_noise.enabled: true`.
+```bash
+# Activate your environment
+conda activate openwam
+# export your robotwin data env
+export OPEN_WAM_ROBOTWIN_DATA=/path/to/robotwin2.0/dataset
+# cross-attention + bridge noise (recipe of cross_attn_clean: 1024 bridge, grad accum 4)
+torchrun --nproc_per_node=4 scripts/train.py \
+  --config-name train_robotwin_clean_cross_attn_bridge_noise.yaml \
+  model.video_backbone.model_path=assets/video_backbone_ckpt/Wan2.2-TI2V-5B \
+  training.output_path=/scratch/ou29/rz6525/WAMU/WAMU/outputs/cross_attn_bridge_noise
+```
+# self-attention + bridge noise (recipe of self_attention_30k / sft_from_scratch_robotwin_clean: grad accum 1)
+
+
 
 ### 2026-10-22 (v2.0) 
 bug fix for v1.0, they have a apparent bug that might impact on the the cross-attention architecture.

@@ -17,6 +17,7 @@ from torch import Tensor
 from openwam.model.action_backbone.separate_action_dit import ActionDiT
 from openwam.model.architectures.base import BaseWAMArchitecture
 from openwam.model.architectures.registry import _cfg_get, register_architecture
+from openwam.model.architectures.utils.bridge_noise import BridgeNoise
 from openwam.model.architectures.utils.common import resolve_bridge_layers
 from openwam.model.compile_options import (
     compile_enabled,
@@ -59,8 +60,10 @@ class DualSystemCrossAttnArchitecture(BaseWAMArchitecture):
         self._detach_bridge: bool = False
         self._action_video_attention_mode: str = "all_frames"
         self._compiled_action_forward: Optional[Callable[..., Tensor]] = None
+        self._bridge_noise: Optional[BridgeNoise] = None
         if cfg is None:
             return
+        self._bridge_noise = BridgeNoise.from_arch_cfg(cfg)
         if self.video_backbone is not None:
             # Auto-fill action-side geometry from the loaded video backbone,
             # mirroring ``joint_self_attn``. cross_attn does NOT require
@@ -209,6 +212,7 @@ class DualSystemCrossAttnArchitecture(BaseWAMArchitecture):
         use_gradient_checkpointing_offload: bool = False,
         **pipeline_inputs,
     ) -> Tuple[Tensor, Optional[Tensor]]:
+        noise_ids = pipeline_inputs.pop("_bridge_noise_ids", None)
         vb = self.video_backbone
         ab = self.action_backbone
         if vb is None:
@@ -247,6 +251,10 @@ class DualSystemCrossAttnArchitecture(BaseWAMArchitecture):
         bridge_set = frozenset(ab.bridge_layers)
         bridges: dict[int, Tensor] = {}
         detach_bridge = self._detach_bridge
+        noise_plan = None
+        if self._bridge_noise is not None and self.training:
+            grid = (int(vstate.grid_frames), int(vstate.grid_height), int(vstate.grid_width))
+            noise_plan = self._bridge_noise.plan(noisy_actions.shape[0], grid, noise_ids, noisy_actions.device)
 
         for block_id in range(vb.num_layers):
             vstate = vb.run_block(block_id, vstate)
@@ -268,6 +276,8 @@ class DualSystemCrossAttnArchitecture(BaseWAMArchitecture):
                             f"with grid_height={vstate.grid_height}, grid_width={vstate.grid_width}."
                         )
                     bridge = bridge[:, :tokens_per_frame]
+                if noise_plan is not None:
+                    bridge = noise_plan.apply(bridge, block_id)       # same tokens every layer; video stream untouched
                 bridges[block_id] = bridge.detach() if detach_bridge else bridge
 
         video_pred = vb.finalize(vstate)

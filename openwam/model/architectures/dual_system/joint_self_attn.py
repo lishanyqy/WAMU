@@ -25,6 +25,7 @@ from openwam.model.architectures.dual_system.mot_driver import DualSystemMoTDriv
 from openwam.model.architectures.registry import register_architecture
 from openwam.model.architectures.utils.common import resolve_bridge_layers
 from openwam.model.architectures.utils.mask_modes import ACTION_SEES_VIDEO
+from openwam.model.architectures.utils.bridge_noise import BridgeNoise
 from openwam.model.action_backbone.components import ActionFiLM, LegacyActionFiLM
 from openwam.model.action_backbone.film import ConcatActionFiLM
 from openwam.model.compile_options import (
@@ -52,8 +53,10 @@ class DualSystemSelfAttnArchitecture(BaseWAMArchitecture):
         self._mot_driver: DualSystemMoTDriver | None = None
         self._mot_driver_kwargs: dict = {}
         self._compiled_mot_run_joint_loop: Optional[Callable[..., Tuple[object, object]]] = None
+        self._bridge_noise: Optional[BridgeNoise] = None
         if cfg is None:
             return
+        self._bridge_noise = BridgeNoise.from_arch_cfg(cfg)
         if self.video_backbone is not None:
             cfg = dict(cfg) if isinstance(cfg, dict) else {k: v for k, v in cfg.items()}
             cfg.setdefault("num_dit_layers", self.video_backbone.num_layers)
@@ -218,6 +221,7 @@ class DualSystemSelfAttnArchitecture(BaseWAMArchitecture):
         use_gradient_checkpointing_offload: bool = False,
         **pipeline_inputs,
     ) -> Tuple[Tensor, Optional[Tensor]]:
+        noise_ids = pipeline_inputs.pop("_bridge_noise_ids", None)
         vb = self.video_backbone
         ab = self.action_backbone
         if vb is None:
@@ -268,7 +272,14 @@ class DualSystemSelfAttnArchitecture(BaseWAMArchitecture):
             use_gradient_checkpointing=use_gradient_checkpointing,
             use_gradient_checkpointing_offload=use_gradient_checkpointing_offload,
         )
+        # bridge_noise: corrupt the video K/V the action rows read (training only); the video rows keep the clean K/V.
+        driver.noise_plan = None
+        if self._bridge_noise is not None and self.training:
+            grid = (int(vstate.grid_frames), int(vstate.grid_height), int(vstate.grid_width))
+            driver.noise_plan = self._bridge_noise.plan(noisy_actions.shape[0], grid, noise_ids, noisy_actions.device)
         compiled_loop = getattr(self, "_compiled_mot_run_joint_loop", None)
+        if driver.noise_plan is not None:
+            compiled_loop = None                      # the per-forward plan is Python state; keep the eager loop
         if compiled_loop is not None and not use_gradient_checkpointing and not use_gradient_checkpointing_offload:
             try:
                 vstate, astate = compiled_loop(vstate, astate)
@@ -288,5 +299,6 @@ class DualSystemSelfAttnArchitecture(BaseWAMArchitecture):
                 use_gradient_checkpointing=use_gradient_checkpointing,
                 use_gradient_checkpointing_offload=use_gradient_checkpointing_offload,
             )
+        # keep driver.noise_plan: gradient-checkpoint recomputation in backward re-reads it (the next forward resets it)
         return vb.finalize(vstate), ab.extract_prediction(astate)
 __all__ = ["DualSystemSelfAttnArchitecture"]

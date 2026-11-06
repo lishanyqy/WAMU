@@ -18,7 +18,7 @@ EMB_NAME = {'franka': 'Franka', 'aloha-agilex': 'Aloha-Agilex (in-distribution: 
 SET = sys.argv[2] if len(sys.argv) > 2 else 'v1'
 ORDER_SETS = {'v1': ['joint_self_attention', 'joint_self_attention_mutual', 'joint_self_attention_video_sees_action', 'joint_self_attention_isolated',
                      'sft_ego_robot_cotrain_robotwin_full_action_sees_video', 'joint_cross_attention', 'joint_cross_attention_detach'],
-              'v2': ['sft_from_scratch_robotwin_clean', 'cross_attn_clean', 'cross_attn_detach_robotwin_clean', 'cross_attn_clean_fix3072']}
+              'v2': ['sft_from_scratch_robotwin_clean', 'cross_attn_clean', 'cross_attn_detach_robotwin_clean', 'cross_attn_clean_fix3072', 'cross_attention_softmax']}
 ORDER = ORDER_SETS[SET]
 OUT = ROOT / (('reports/openwam_attention.html' if EMB == 'franka' else f'reports/openwam_attention_{EMB.split("-")[0]}.html') if SET == 'v1' else f'reports/openwam_attention_{SET}_{EMB.split("-")[0]}.html')
 MODE = {'joint_self_attention': 'action sees all video', 'joint_self_attention_mutual': 'mutual: action sees all video, video sees action',
@@ -28,8 +28,9 @@ MODE = {'joint_self_attention': 'action sees all video', 'joint_self_attention_m
         'sft_from_scratch_robotwin_clean': 'self-attention, action sees all video (30k steps, from scratch, 80-d unified actions)',
         'cross_attn_clean': 'bridge cross-attention, every layer, 3072→1024→3072 bridge (30k steps)',
         'cross_attn_detach_robotwin_clean': 'bridge cross-attention, gradient detached (video generation), 3072→1024→3072 bridge (30k steps)',
-        'cross_attn_clean_fix3072': 'bridge cross-attention, every layer, no bottleneck: K/V straight from the 3072-d video state (30k steps)'}
-DISPLAY_V2 = {'sft_from_scratch_robotwin_clean': 'self_attention_30k', 'cross_attn_clean': 'cross_attention_30k', 'cross_attn_detach_robotwin_clean': 'video_generation_30k', 'cross_attn_clean_fix3072': 'cross_attention_kv3072_30k'}
+        'cross_attn_clean_fix3072': 'bridge cross-attention, every layer, no bottleneck: K/V straight from the 3072-d video state (30k steps)',
+        'cross_attention_softmax': 'bridge cross-attention whose query attends to [action ; video] keys in ONE softmax, 1024 bridge (30k steps)'}
+DISPLAY_V2 = {'sft_from_scratch_robotwin_clean': 'self_attention_30k', 'cross_attn_clean': 'cross_attention_30k', 'cross_attn_detach_robotwin_clean': 'video_generation_30k', 'cross_attn_clean_fix3072': 'cross_attention_kv3072_30k', 'cross_attention_softmax': 'cross_attention_softmax_30k'}
 _disp = disp
 # success rates of the four 30k-step checkpoints (user, 2026-10-29): self-attention 14 >> cross_attn 4.8 >= detach 4 > fix3072 3
 SUCCESS = dict(SUCCESS, sft_from_scratch_robotwin_clean=14.0, cross_attn_clean=4.8, cross_attn_detach_robotwin_clean=4.0, cross_attn_clean_fix3072=3.0)
@@ -64,7 +65,7 @@ def summary_table(D):
             w_video, w_action = f'{mv.mean():.1%}', f'{z["mass_action"].mean():.1%}'
         else:
             w_video, w_action = 'separate softmax', 'separate softmax'
-        cells = [f'<td><span class="mono">{esc(disp(m))}</span></td>', f'<td>{esc(MODE[m])}</td>', f'<td class="num">{SUCCESS.get(m, float("nan")):.2f}</td>',
+        cells = [f'<td><span class="mono">{esc(disp(m))}</span></td>', f'<td>{esc(MODE[m])}</td>', (f'<td class="num">{SUCCESS[m]:.2f}</td>' if m in SUCCESS else '<td class="num">n/a</td>'),
                  f'<td class="num">{w_video}</td>', f'<td class="num">{w_action}</td>',
                  f'<td class="num"><b>{fv.mean():.1%}</b></td>', f'<td class="num">{1 - fv.mean():.1%}</td>',
                  f'<td class="num">{ab[:, 1].mean():.1%}</td>', f'<td class="num">×{ab[:, 5].mean() / max(ab[:, 4].mean(), 1e-9):.2f}</td>']

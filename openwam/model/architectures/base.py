@@ -1037,6 +1037,11 @@ class BaseWAMArchitecture(ABC, nn.Module):
             ]
             inputs["video_is_pad"] = torch.stack(latent_masks, dim=0).to(device=_device)
 
+        # bridge_noise (wamu/bridge_noise_plan.md): stable sample identities, so two architectures that see the same window
+        # draw the same corruption plan. Only added when the architecture uses it, so every other path is unchanged.
+        if getattr(self, "_bridge_noise", None) is not None:
+            inputs["_bridge_noise_ids"] = [f"{s.get('episode_path', '?')}:{s.get('start_frame', '?')}" for s in samples]
+
         return inputs
 
     # --- Training: loss computation ---

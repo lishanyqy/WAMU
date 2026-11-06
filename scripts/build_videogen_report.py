@@ -6,11 +6,12 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 TAG = sys.argv[1] if len(sys.argv) > 1 else 'franka'
 SRC = ROOT / 'artifacts/videogen'; OUT = ROOT / f'reports/openwam_videogen_{TAG.split("-")[0] if TAG != "aloha-random" else "aloha_random"}.html'
-ORDER = ['sft_from_scratch_robotwin_clean', 'cross_attn_clean', 'cross_attn_detach_robotwin_clean', 'cross_attn_clean_fix3072']
-NAME = {'sft_from_scratch_robotwin_clean': 'self_attention_30k', 'cross_attn_clean': 'cross_attention_30k', 'cross_attn_detach_robotwin_clean': 'video_generation_30k', 'cross_attn_clean_fix3072': 'cross_attention_kv3072_30k'}
+ORDER = ['sft_from_scratch_robotwin_clean', 'cross_attn_clean', 'cross_attn_detach_robotwin_clean', 'cross_attn_clean_fix3072', 'cross_attention_softmax']
+NAME = {'sft_from_scratch_robotwin_clean': 'self_attention_30k', 'cross_attn_clean': 'cross_attention_30k', 'cross_attn_detach_robotwin_clean': 'video_generation_30k', 'cross_attn_clean_fix3072': 'cross_attention_kv3072_30k', 'cross_attention_softmax': 'cross_attention_softmax_30k'}
 SUCCESS = {'sft_from_scratch_robotwin_clean': 14.0, 'cross_attn_clean': 4.8, 'cross_attn_detach_robotwin_clean': 4.0, 'cross_attn_clean_fix3072': 3.0}
 DATA = {'franka': 'RoboTwin Franka clean_50 (another robot: out of distribution)', 'aloha-random': 'RoboTwin Aloha-Agilex randomized_500 (same robot, unseen scenes)'}[TAG]
 esc = html.escape
+succ = lambda m: f'{SUCCESS[m]:.1f}' if m in SUCCESS else 'n/a'
 METRICS = [('psnr', 'PSNR (dB) ↑', 2), ('ssim', 'SSIM ↑', 3), ('lpips', 'LPIPS ↓', 3)]
 
 
@@ -29,9 +30,9 @@ def summary(D, region):
     ref = next(iter(D.values())) if D else None
     for m in ORDER:
         if m not in D:
-            rows.append(f'<tr><td class="mono">{NAME[m]}</td><td class="num">{SUCCESS[m]:.1f}</td><td class="num partial" colspan="4">pending</td></tr>'); continue
+            rows.append(f'<tr><td class="mono">{NAME[m]}</td><td class="num">{succ(m)}</td><td class="num partial" colspan="4">pending</td></tr>'); continue
         z = D[m]
-        cells = [f'<td class="mono">{NAME[m]}</td>', f'<td class="num">{SUCCESS[m]:.1f}</td>']
+        cells = [f'<td class="mono">{NAME[m]}</td>', f'<td class="num">{succ(m)}</td>']
         for k, _, d in METRICS:
             cells.append(f'<td class="num">{z[f"gen_{k}_{region}"].mean():.{d}f}</td>')
         d_lp = z[f'gen_lpips_{region}'].mean() - z[f'copy_lpips_{region}'].mean()
