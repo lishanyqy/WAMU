@@ -1,0 +1,42 @@
+# Real-robot fine-tuning entry point for the WAMU real LeRobot-v3 checkout.
+defaults:
+  - train
+  - _self_
+
+dataloader:
+  type: wamu_real
+  dataset_dir: datasets/lishanyang_wamu_real
+  split: train
+  action_mode: joint
+  unify_action: true
+  unify_action_map: ["0-6", "34-40"]
+  num_frames: 33
+  video_stride: 4
+  window_stride: 1
+  # Raw joint units keep all four heterogeneous buckets deployable from one checkpoint.
+  normalize_mode: null
+  # Shared 14-D stats for all four buckets (scripts/compute_wamu_real_stats.py).
+  # Used only when normalize_mode is quantile / min-max / z-score.
+  normalization_stats_path: datasets/lishanyang_wamu_real/meta/stats.json
+  multiview: true
+  camera_layout: [observation.images.top, observation.images.left_wrist, observation.images.right_wrist]
+  target_camera: observation.images.top
+  color_jitter:
+    enabled: true
+    brightness: 0.2
+    contrast: 0.2
+    saturation: 0.2
+    hue: 0.0
+
+training:
+  debug: false
+  batch_size: 1
+  dataset_num_workers: 0
+  mixed_precision: bf16
+  zero_stage: 1
+  output_path: outputs/robodojo_real
+
+project:
+  name: openwam-robodojo-real
+  wandb:
+    enabled: false

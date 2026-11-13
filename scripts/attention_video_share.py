@@ -28,6 +28,7 @@ import argparse
 import inspect
 import json
 import math
+import os
 import sys
 import tempfile
 import time
@@ -93,6 +94,21 @@ def entropy(p):
     return -(p.clamp_min(1e-12).log() * p).sum(-1)
 
 
+def video_entropies(p_video, grid):
+    """Entropy of the attention over video keys only (renormalised), and per latent frame (renormalised within the frame).
+    Same 360-key support for self- and cross-attention, so the two families are comparable."""
+    Fr, gh, gw = grid
+    pv = p_video / p_video.sum(-1, keepdim=True).clamp_min(1e-12)
+    pf = p_video.reshape(*p_video.shape[:-1], Fr, gh * gw)
+    pf = pf / pf.sum(-1, keepdim=True).clamp_min(1e-12)
+    return float(entropy(pv).mean()), entropy(pf).mean(tuple(range(pf.dim() - 2))).cpu().numpy()   # scalar, (Fr,)
+
+
+def add_video_entropies(rec, p_video):
+    ev, ef = video_entropies(p_video, STATE['grid'])
+    rec['entropy_video'] += ev; rec['entropy_frame'] = rec['entropy_frame'][:len(ef)] + ef
+
+
 def install_self_attn_hooks(arch):
     vb, ab = arch.video_backbone, arch.action_backbone
     drv = arch._mot_driver or arch.build_mot_driver()
@@ -132,6 +148,7 @@ def install_self_attn_hooks(arch):
         rec['mass_action'] += float(p[..., Sv:].sum(-1).mean())
         rec['head_video'] += pv.sum(-1).mean((0, 2)).cpu().numpy()
         rec['entropy'] += float(entropy(p).mean())
+        add_video_entropies(rec, pv)
         rec['mass_video_query'] += pv.sum(-1).mean((0, 1)).cpu().numpy()          # per action step
         STATE['video_part'] = (pv @ vv[:, :, :Sv]).transpose(1, 2).reshape(B, Sa, H * Dh)
         return out
@@ -159,7 +176,8 @@ def install_cross_attn_hooks(arch):
     ab = arch.action_backbone
     H = ab.num_heads
     for li, block in enumerate(ab.blocks):
-        def fwd(x_action, x_video, t_mod, freqs=None, context=None, context_mask=None, *, self=block, li=li):
+        def fwd(x_action, x_video, t_mod, freqs=None, context=None, context_mask=None, x_video_v=None, *, self=block, li=li):
+            # cross_attention_direct: x_video = the video DiT's own keys (normed + RoPE), x_video_v = its values
             (shift_sa, scale_sa, gate_sa, shift_ca, scale_ca, gate_ca, shift_ff, scale_ff, gate_ff) = (
                 self.modulation.to(dtype=t_mod.dtype, device=t_mod.device) + t_mod).chunk(9, dim=1)
             h = self.self_attn_norm(x_action) * (1 + scale_sa) + shift_sa
@@ -169,6 +187,7 @@ def install_cross_attn_hooks(arch):
             h = self.bridge_attn_norm(x_action) * (1 + scale_ca) + shift_ca
             ca = self.cross_attn
             joint = getattr(ca, 'joint_action_kv', False)          # cross_attention_softmax
+            direct = getattr(self, 'direct_video_kv', False)       # cross_attention_direct
             cut_here = STATE.get('ablate') and li >= STATE.get('ablate_from', 0)
             if joint and cut_here:
                 # joint-softmax ablation = drop the video keys from the softmax (as the self-attn ablation masks them)
@@ -176,10 +195,10 @@ def install_cross_attn_hooks(arch):
                 va = rearrange(ca.v_a(h), 'b s (n d) -> b n s d', n=H)
                 upd_ca = gate_ca * ca.o(rearrange(torch.nn.functional.scaled_dot_product_attention(qa, ka, va), 'b n s d -> b s (n d)'))
             else:
-                upd_ca = gate_ca * ca(h, x_video)
+                upd_ca = gate_ca * (ca(h, x_video, x_video_v) if direct else ca(h, x_video))
             if not STATE.get('ablate'):
                 Sa_ = h.shape[1]
-                q = rearrange(ca.norm_q(ca.q(h)), 'b s (n d) -> b n s d', n=H).float(); k = rearrange(ca.norm_k(ca.k(x_video)), 'b s (n d) -> b n s d', n=H).float()
+                q = rearrange(ca.norm_q(ca.q(h)), 'b s (n d) -> b n s d', n=H).float(); k = rearrange(x_video if direct else ca.norm_k(ca.k(x_video)), 'b s (n d) -> b n s d', n=H).float()
                 if joint:
                     k = torch.cat([rearrange(ca.norm_k_a(ca.k_a(h)), 'b s (n d) -> b n s d', n=H).float(), k], dim=2)
                 p_all = (q @ k.transpose(-1, -2) / math.sqrt(q.shape[-1])).softmax(-1)   # (B, H, Sa, [Sa +] Sv)
@@ -191,7 +210,18 @@ def install_cross_attn_hooks(arch):
                 rec['mass_action'] += float(p_all[..., :Sa_].sum(-1).mean()) if joint else 0.0
                 rec['head_video'] += p.sum(-1).mean((0, 2)).cpu().numpy()
                 rec['entropy'] += float(entropy(p_all).mean())
+                add_video_entropies(rec, p)
                 rec['mass_video_query'] += p.sum(-1).mean((0, 1)).cpu().numpy()
+                if os.environ.get('ATTN_VERIFY') and not joint and STATE.setdefault('verified', set()).isdisjoint({li}):
+                    # debug: rebuild the cross-attention output from p and compare with the module's own output
+                    STATE['verified'].add(li)
+                    vv = rearrange(x_video_v if direct else ca.v(x_video), 'b s (n d) -> b n s d', n=H).float()
+                    rec_out = ca.o(rearrange((p @ vv).to(h.dtype), 'b n s d -> b s (n d)'))
+                    ref = ca(h, x_video, x_video_v) if direct else ca(h, x_video)
+                    lg = q @ k.transpose(-1, -2) / math.sqrt(q.shape[-1])
+                    print(f'VERIFY L{li:02d} rel_err {float((rec_out - ref).float().norm() / ref.float().norm()):.4f} '
+                          f'|q| {float(q.norm(dim=-1).mean()):.2f} |k| {float(k.norm(dim=-1).mean()):.2f} logit_std {float(lg.std(-1).mean()):.2f} '
+                          f'max_p {float(p.max(-1).values.mean()):.3f} H {float(entropy(p_all).mean()):.2f} eff_keys {float(entropy(p_all).exp().mean()):.0f}', flush=True)
                 xn2 = x_action.float().norm(dim=-1).clamp_min(1e-6)
                 if joint:
                     # video-key part of the bridge update (o is linear: subtract its bias once)
@@ -291,7 +321,7 @@ def place_on_gpu(arch, device):
 
 
 def new_rec(L, H, Fr, Sa):
-    return [dict(mass_video_frame=np.zeros(Fr), mass_head=0.0, mass_wrist=0.0, mass_action=0.0, head_video=np.zeros(H), entropy=0.0,
+    return [dict(mass_video_frame=np.zeros(Fr), mass_head=0.0, mass_wrist=0.0, mass_action=0.0, head_video=np.zeros(H), entropy=0.0, entropy_video=0.0, entropy_frame=np.zeros(Fr),
                  mass_video_query=np.zeros(Sa), r_video=0.0, r_attn=0.0, frac_video=0.0) for _ in range(L)]
 
 
@@ -346,7 +376,7 @@ def main():
             ep_len = ds._episode_lengths[ep]; max_start = max(0, ep_len - ds._raw_window_len)
             for w in range(a.windows):
                 start = int(round(max_start * w / max(a.windows - 1, 1)))
-                samples.append((task.name, ep, start, ds._build_sample(ep, start)))
+                samples.append((task.name, ep, start, {'_ds': ds, 'prompt': ds._build_sample(ep, start)['prompt']}))   # lazy, as above
     oom_retry(lambda: offload_text_encoder(vb, sorted({s[3]['prompt'] for s in samples}), a.device), 'prompt encoding')
     oom_retry(lambda: place_on_gpu(arch, a.device), 'moving the model to the GPU')
     rec_sum = None; n_rec = 0; abl = []; t0 = time.time(); n_samples = 0

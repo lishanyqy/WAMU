@@ -238,7 +238,7 @@ def classify_pooled(x_tr, y_tr, x_te, y_te, n_cls, dev, seed):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument('--embodiment', required=True, choices=['agilex', 'franka'])
+    p.add_argument('--embodiment', required=True, choices=['agilex', 'franka', 'agilex_c2r', 'agilex_c2c'])
     p.add_argument('--models', nargs='*', default=None, help='default: every OpenWAM model with all episodes extracted')
     p.add_argument('--tasks', nargs='*', default=['depth', 'segmentation', 'classification'])
     p.add_argument('--refs', nargs='*', default=['dinov2', 'videomaev2', 'depthv3', 'd4rt'], help='reference classification baselines')

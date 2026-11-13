@@ -64,7 +64,7 @@ def episode_samples(args):
 
 
 def main():
-    for emb in ('agilex', 'franka'):
+    for emb in (sys.argv[1:] or ('agilex', 'franka')):  # e.g. `build_flow_gt.py agilex_c2r`
         keys = list(np.load(GT_DIR / f'{emb}.npz')['keys'])
         jobs = [(emb, k, i, 1000 * i + 7) for i, k in enumerate(keys)]
         with ProcessPoolExecutor(24) as ex:

@@ -24,6 +24,7 @@ from downstream_data import PROBE_ALIGNED_FRAMES, gt_hdf5, load_split
 from robotwin_gt_frames import feature_indices
 
 CAM = 'observation/head_camera'
+OFFICIAL = Path.home() / 'dataspace/openwam/benchmark_data/robotwin2.0/dataset'
 MIN_AREA = 5e-4  # fraction of the image a frame-0 actor must cover to count as an object
 
 
@@ -34,8 +35,46 @@ def frame0_colours(path):
     return {tuple(int(v) for v in x) for x, n in zip(u, c) if n / len(s) >= MIN_AREA}
 
 
+def _palette():
+    """RoboTwin's 256-colour segmentation palette (envs/camera/camera.py with the GT patch): colour = palette[id % 256]."""
+    from PIL import ImageColor
+    pal = [ImageColor.getrgb(c) for c in sorted(set(ImageColor.colormap.values()))]
+    used, state = set(pal), 12345
+    while len(pal) < 256:
+        state = (state * 1103515245 + 12345) % 2 ** 31
+        c = ((state >> 16) & 255, (state >> 8) & 255, state & 255)
+        if c not in used:
+            used.add(c)
+            pal.append(c)
+    return pal
+
+
+def clutter_colours(main):
+    """Actor colours of the cluttered-table distractors (randomized scenes; empty for clean ones).
+
+    The clean target rule picks among the task's objects; with clutter on the table a static task object (a clicked
+    bell) loses to a distractor that the arm partly occludes, so distractors are excluded to keep the same rule."""
+    real = Path(main).resolve()
+    # The replay rewrites its own scene_info.json and can leave cluttered_table_info empty; read the official record.
+    task_dir = real.parent.parent
+    info_path = OFFICIAL / task_dir.parent.name / 'aloha-agilex_randomized_500' / 'scene_info.json' \
+        if task_dir.name == 'gt_export_randomized' else task_dir / 'scene_info.json'
+    extra = real.with_name(real.name.replace('.hdf5', '_extra.hdf5'))
+    if not info_path.exists() or not extra.exists():
+        return set()
+    ep = 'episode_' + real.stem.replace('episode', '')
+    types = {c['object_type'] for c in json.loads(info_path.read_text()).get(ep, {}).get('cluttered_table_info', [])}
+    if not types:
+        return set()
+    with h5py.File(extra, 'r') as x:
+        ids = [int(e) for e, n in zip(x['entities/entity_id'][:], x['entities/name'][:].astype(str)) if n in types]
+    pal = _palette()
+    return {tuple(pal[e % 256]) for e in ids}
+
+
 def episode_targets(args):
     embodiment, key, background, size = args
+    clutter = clutter_colours(gt_hdf5(embodiment, key))
     with h5py.File(gt_hdf5(embodiment, key), 'r') as f:
         n = len(f[f'{CAM}/rgb'])
         ids = feature_indices(n)
@@ -45,7 +84,7 @@ def episode_targets(args):
     ys, xs = np.mgrid[:h, :w]
     u, c = np.unique(seg[0].reshape(-1, 3), axis=0, return_counts=True)
     candidates = [tuple(int(v) for v in x) for x, k in zip(u, c) if k / (h * w) >= MIN_AREA]
-    candidates = [col for col in candidates if col not in background]
+    candidates = [col for col in candidates if col not in background and col not in clutter]
     moves = {}
     for col in candidates:
         m = (seg == np.array(col, np.uint8)).all(-1)
@@ -63,7 +102,7 @@ def episode_targets(args):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument('--embodiment', required=True, choices=['agilex', 'franka'])
+    p.add_argument('--embodiment', required=True, choices=['agilex', 'franka', 'agilex_c2r', 'agilex_c2c'])
     p.add_argument('--split', default='artifacts/downstream/split.json')
     p.add_argument('--output', type=Path, default=Path('artifacts/downstream/gt'))
     p.add_argument('--size', type=int, nargs=2, default=[120, 160], help='H W of stored probe targets')

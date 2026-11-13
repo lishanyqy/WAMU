@@ -11,7 +11,10 @@ jobs = [('sft_from_scratch_robotwin_clean', 'OpenWAM/sft_from_scratch_robotwin_c
         ('cross_attn_clean', 'paperupload/WAMs', 'dataset', 'action_film/cross_attn_clean/2026-10-14_17-14-10'),
         ('cross_attn_detach_robotwin_clean', 'paperupload/WAMs', 'dataset', 'action_film/cross_attn_detach_robotwin_clean/2026-10-17_13-48-31'),
         ('cross_attn_clean_fix3072', 'paperupload/WAMs', 'dataset', 'action_film/cross_attn_clean_fix3072/2026-10-24_11-45-18'),
-        ('cross_attention_softmax', 'paperupload/WAMs', 'dataset', 'action_film/cross_attention_softmax/2026-11-01_07-44-53')]
+        ('cross_attention_softmax', 'paperupload/WAMs', 'dataset', 'action_film/cross_attention_softmax/2026-11-01_07-44-53'),
+        ('self_attn_detach_robotwin_clean', 'paperupload/WAMs', 'dataset', 'action_film/self-attn-detach/2026-11-03_12-56-19'),
+        ('sft_ego_robot_cotrain_robotwin_clean_action_sees_video', 'OpenWAM/sft_ego_robot_cotrain_robotwin_clean_action_sees_video', 'model', None),
+        ('cross_attn_direct', 'paperupload/WAMs', 'dataset', 'action_film/cross_attn_direct/2026-11-09_03-24-05')]
 for name, repo, rtype, sub in jobs:
     dst = out / name; dst.mkdir(parents=True, exist_ok=True)
     if (dst / 'checkpoint_step_30000.safetensors').exists() and (dst / 'config.yaml').exists():

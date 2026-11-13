@@ -221,7 +221,7 @@ def dinov2_dense(embodiment, keys, layers, device='cuda', size=(224, 294)):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument('--embodiment', required=True, choices=['agilex', 'franka'])
+    p.add_argument('--embodiment', required=True, choices=['agilex', 'franka', 'agilex_c2r', 'agilex_c2c'])
     p.add_argument('--models', nargs='*', default=None, help='OpenWAM models (default: all with every split episode extracted)')
     p.add_argument('--refs', nargs='*', default=[], choices=['d4rt', 'videomaev2', 'dinov2', 'sam', 'da3'])
     p.add_argument('--layers', type=int, nargs='*', default=None)

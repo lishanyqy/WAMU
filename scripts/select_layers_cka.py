@@ -96,7 +96,7 @@ def cka(kx, ky):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument('--embodiment', required=True, choices=['agilex', 'franka'])
+    p.add_argument('--embodiment', required=True, choices=['agilex', 'franka', 'agilex_c2r', 'agilex_c2c'])
     p.add_argument('--split', type=Path, default=Path('artifacts/downstream/split.json'))
     p.add_argument('--openwam-root', type=Path, default=Path('/home/a1905721/dataspace/openwam_gt_features'))
     p.add_argument('--ref-root', type=Path, default=None, help='default: artifacts/<embodiment>_temporal_features_gt')

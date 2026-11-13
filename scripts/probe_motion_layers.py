@@ -140,7 +140,7 @@ def dinov2_frames_tokens(emb, keys, layers, device):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument('--embodiment', required=True, choices=['agilex', 'franka'])
+    p.add_argument('--embodiment', required=True, choices=['agilex', 'franka', 'agilex_c2r', 'agilex_c2c'])
     p.add_argument('--models', nargs='*', default=None)
     p.add_argument('--refs', nargs='*', default=[], choices=['d4rt', 'videomaev2', 'dinov2'])
     p.add_argument('--layers', type=int, nargs='*', default=None)

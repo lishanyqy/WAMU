@@ -248,7 +248,7 @@ class Keys(list):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument('--embodiment', required=True, choices=['agilex', 'franka'])
+    p.add_argument('--embodiment', required=True, choices=['agilex', 'franka', 'agilex_c2r', 'agilex_c2c'])
     p.add_argument('--models', nargs='*', default=None, help='default: every OpenWAM model with all split episodes extracted')
     p.add_argument('--refs', nargs='*', default=list(TOKEN_REFS))
     p.add_argument('--layers', type=int, nargs='*', default=None, help='OpenWAM layers (default: all)')

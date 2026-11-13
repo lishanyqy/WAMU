@@ -14,13 +14,18 @@ from build_probe_report import SUCCESS, disp
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / 'artifacts/attention'
 EMB = sys.argv[1] if len(sys.argv) > 1 else 'franka'
-EMB_NAME = {'franka': 'Franka', 'aloha-agilex': 'Aloha-Agilex (in-distribution: the checkpoints were trained on it)', 'aloha-random': 'Aloha-Agilex randomized_500 (100 random training windows per task)'}[EMB]
+EMB_NAME = {'franka': 'Franka', 'aloha-agilex': 'Aloha-Agilex (in-distribution: the checkpoints were trained on it)', 'aloha-random': 'Aloha-Agilex randomized_500 (100 random training windows per task)',
+            'aloha-clean': 'Aloha-Agilex clean_50 (the c2r checkpoints\' own training data)',
+            'aloha-c2c': 'Aloha-Agilex clean_50, the 500 clean probe test episodes of agilex_c2c (training data of these checkpoints)',
+            'aloha-c2r': 'Aloha-Agilex randomized_500, the 500 probe test episodes of agilex_c2r (unseen in training)'}[EMB]
 SET = sys.argv[2] if len(sys.argv) > 2 else 'v1'
 ORDER_SETS = {'v1': ['joint_self_attention', 'joint_self_attention_mutual', 'joint_self_attention_video_sees_action', 'joint_self_attention_isolated',
                      'sft_ego_robot_cotrain_robotwin_full_action_sees_video', 'joint_cross_attention', 'joint_cross_attention_detach'],
-              'v2': ['sft_from_scratch_robotwin_clean', 'cross_attn_clean', 'cross_attn_detach_robotwin_clean', 'cross_attn_clean_fix3072', 'cross_attention_softmax']}
+              'v2': ['sft_from_scratch_robotwin_clean', 'cross_attn_clean', 'cross_attn_detach_robotwin_clean', 'cross_attn_clean_fix3072', 'cross_attention_softmax'],
+              'c2r': ['sft_from_scratch_robotwin_clean', 'cross_attn_clean', 'cross_attn_detach_robotwin_clean', 'self_attn_detach_robotwin_clean',
+                      'sft_ego_robot_cotrain_robotwin_clean_action_sees_video', 'sft_robot_only_robotwin_clean', 'cross_attn_direct']}
 ORDER = ORDER_SETS[SET]
-OUT = ROOT / (('reports/openwam_attention.html' if EMB == 'franka' else f'reports/openwam_attention_{EMB.split("-")[0]}.html') if SET == 'v1' else f'reports/openwam_attention_{SET}_{EMB.split("-")[0]}.html')
+OUT = ROOT / (('reports/openwam_attention.html' if EMB == 'franka' else f'reports/openwam_attention_{EMB.split("-")[0]}.html') if SET == 'v1' else f'reports/openwam_attention_{SET}_{EMB if SET == "c2r" else EMB.split("-")[0]}.html')
 MODE = {'joint_self_attention': 'action sees all video', 'joint_self_attention_mutual': 'mutual: action sees all video, video sees action',
         'joint_self_attention_video_sees_action': 'action sees first frame only; video sees action', 'joint_self_attention_isolated': 'action sees first frame only',
         'sft_ego_robot_cotrain_robotwin_full_action_sees_video': 'action sees all video (co-trained)', 'joint_cross_attention': 'bridge cross-attention, every layer',
@@ -32,6 +37,13 @@ MODE = {'joint_self_attention': 'action sees all video', 'joint_self_attention_m
         'cross_attention_softmax': 'bridge cross-attention whose query attends to [action ; video] keys in ONE softmax, 1024 bridge (30k steps)'}
 DISPLAY_V2 = {'sft_from_scratch_robotwin_clean': 'self_attention_30k', 'cross_attn_clean': 'cross_attention_30k', 'cross_attn_detach_robotwin_clean': 'video_generation_30k', 'cross_attn_clean_fix3072': 'cross_attention_kv3072_30k', 'cross_attention_softmax': 'cross_attention_softmax_30k'}
 _disp = disp
+MODE.update({'self_attn_detach_robotwin_clean': 'self-attention, action sees all video, video K/V detached for the action rows (30k steps)',
+             'sft_ego_robot_cotrain_robotwin_clean_action_sees_video': 'self-attention, action sees all video, from the ego/robot co-trained checkpoint (pretrained)',
+             'sft_robot_only_robotwin_clean': 'self-attention, action sees all video, fine-tuned from a robot-only pretrained checkpoint',
+             'cross_attn_direct': 'cross-attention whose action query reads the video DiT\'s own K/V at each layer (no bridge projection), separate softmax'})
+if SET == 'c2r':   # same names as reports/openwam_clean2rand.html
+    DISPLAY_V2 = {'sft_from_scratch_robotwin_clean': 'self-attn', 'cross_attn_clean': 'cross-attn', 'cross_attn_detach_robotwin_clean': 'cross-attn-detach',
+                  'self_attn_detach_robotwin_clean': 'self-attn-detach', 'sft_ego_robot_cotrain_robotwin_clean_action_sees_video': 'pretrained', 'sft_robot_only_robotwin_clean': 'pretrained-robot-only', 'cross_attn_direct': 'cross-attn-direct'}
 # success rates of the four 30k-step checkpoints (user, 2026-10-29): self-attention 14 >> cross_attn 4.8 >= detach 4 > fix3072 3
 SUCCESS = dict(SUCCESS, sft_from_scratch_robotwin_clean=14.0, cross_attn_clean=4.8, cross_attn_detach_robotwin_clean=4.0, cross_attn_clean_fix3072=3.0)
 def disp(m):
@@ -210,7 +222,7 @@ def cut_section():
 def main():
     D = load()
     any_ = next(iter(D.values())) if D else None
-    meta = (f'{int(any_["n_windows"])} windows per model ({EMB_NAME}, 2 episodes × 3 windows per task), {int(any_["n_forwards"])} forwards; video sigma {float(any_["video_sigma"]):.2f}; '
+    meta = (f'{int(any_["n_windows"])} windows per model ({EMB_NAME}, {int(any_["n_windows"]) // 150 if EMB in ("aloha-c2r", "aloha-c2c") else 2} episodes × 3 windows per task), {int(any_["n_forwards"])} forwards; video sigma {float(any_["video_sigma"]):.2f}; '
             f'action sigmas {", ".join(f"{s:.2f}" for s in any_["action_sigmas"])}; token grid {tuple(int(x) for x in any_["grid"])} (frames × rows × cols), head rows {int(any_["head_rows"])}') if any_ else 'no results yet'
     body = f'''
 <section><h2>The difference</h2>
@@ -240,9 +252,10 @@ def main():
 {layer_table(D, 'mass_video_frame', 'First-frame share of the video mass', transform=lambda z: z['mass_video_frame'][:, 0] / np.maximum(z['mass_video_frame'].sum(1), 1e-9))}
 </section>
 <section><h2>Which latent frames the action stream looks at</h2>{frame_table(D)}</section>'''
-    caveat = ('<p><b>Caveat for this embodiment.</b> The Aloha-Agilex clean_50 episodes are the checkpoints\' own training data (dataloader variant "both" = clean_50 + randomized_500), so with video present the flow-matching error is near zero (the actions are memorised) and the error <em>ratio</em> is not meaningful here; read the absolute NMSE without video, the velocity change and the attention weights instead, and compare them with the Franka page, where the same quantities are out of distribution.</p>' if EMB != 'franka' else '')
+    caveat = ('<p><b>Out of distribution.</b> These checkpoints were trained on Aloha-Agilex clean_50 only; randomized_500 (cluttered tables, random textures and lighting) is unseen, so the NMSE values and the with/without-video ratio are real held-out numbers.</p>' if SET == 'c2r' and EMB in ('aloha-random', 'aloha-c2r') else
+              '<p><b>Caveat for this embodiment.</b> The Aloha-Agilex clean_50 episodes are the checkpoints\' own training data, so with video present the flow-matching error is near zero (the actions are memorised) and the error <em>ratio</em> is not meaningful here; read the absolute NMSE without video, the velocity change and the attention weights instead.</p>' if SET == 'c2r' else '') if SET == 'c2r' else (('<p><b>Caveat for this embodiment.</b> The Aloha-Agilex clean_50 episodes are the checkpoints\' own training data (dataloader variant "both" = clean_50 + randomized_500), so with video present the flow-matching error is near zero (the actions are memorised) and the error <em>ratio</em> is not meaningful here; read the absolute NMSE without video, the velocity change and the attention weights instead, and compare them with the Franka page, where the same quantities are out of distribution.</p>' if EMB != 'franka' else ''))
     page = f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Action-to-video attention{' (Aloha)' if EMB != 'franka' else ''}</title>
+<title>{'Attention ' + ('Rand' if EMB == 'aloha-c2r' else 'Clean') + ' C2R' if EMB in ('aloha-c2r', 'aloha-c2c') else 'Action-to-video attention' + (' (Aloha)' if EMB != 'franka' else '')}</title>
 <style>
 :root {{ --bg: #f7f8fa; --surface: #fff; --fg: #1b1f2a; --muted: #5d6577; --line: #d9dde5; --accent: #2c4fa3; --soft: #e3e9f8; --partial: #9a6700; }}
 @media (prefers-color-scheme: dark) {{ :root:not([data-theme="light"]) {{ --bg: #12151c; --surface: #1a1e27; --fg: #e4e7ee; --muted: #9aa1b0; --line: #2d3340; --accent: #8ea8f0; --soft: #232c45; --partial: #e2b53e; }} }}

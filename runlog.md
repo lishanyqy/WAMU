@@ -26,6 +26,18 @@ torchrun --nproc_per_node=4 scripts/train.py \
   training.output_path=/scratch/ou29/rz6525/WAMU/WAMU/outputs/concat_action_film \
 ```
 
+### 2026-11-11 (v0.2)
+Concat Action FiLM
+```bash
+# Activate your environment
+conda activate openwam
+# export your robotwin data env
+export OPEN_WAM_ROBOTWIN_DATA=/path/to/robotwin2.0/dataset
+torchrun --nproc_per_node=4 scripts/train.py \
+  --config-name train_robotwin_clean_concat_action_film.yaml \
+  model.video_backbone.model_path=assets/video_backbone_ckpt/Wan2.2-TI2V-5B \
+  training.output_path=/scratch/ou29/rz6525/WAMU/WAMU/outputs/self_attn_clean \
+```
 
 ### 2026-10-08 (v1.0)
 cross attention action sees video
@@ -124,4 +136,52 @@ torchrun --nproc_per_node=4 scripts/train.py \
   --config-name train_robotwin_clean_cross_attn_fix.yaml \
   model.video_backbone.model_path=assets/video_backbone_ckpt/Wan2.2-TI2V-5B \
   training.output_path=/scratch/ou29/rz6525/WAMU/WAMU/outputs/cross_attn_clean_fix3072 \
+```
+### 2026-11-13 (v3.0)
+WAMU real (WAMsU/wamu_real: bowls / cupstack / eggpack / headphones), joint self-attention from Wan2.2 only (no robot pretraining).
+action_sees_video, no FiLM, shared quantile stats (`<data>/meta/stats.json`), 20k steps.
+```bash
+# Activate your environment
+conda activate openwam
+# export your WAMU real data env (default: datasets/lishanyang_wamu_real)
+export OPEN_WAM_WAMU_REAL_DATA=/path/to/wamu_real
+torchrun --nproc_per_node=4 scripts/train.py \
+  --config-name train_wamu_real_self_attn.yaml \
+  model.video_backbone.model_path=assets/video_backbone_ckpt/Wan2.2-TI2V-5B \
+  training.output_path=/scratch/ou29/rz6525/WAMU/WAMU/outputs/wamu_real_self_attn
+```
+
+### 2026-11-13 (v3.1)
+WAMU real, joint self-attention warm-started from the robot-only pretrained OpenWAM/pretrain_robot_only.
+Same recipe as v3.0 (the checkpoint is also action_sees_video).
+
+**Please download OpenWAM/pretrain_robot_only**
+```bash
+# Activate your environment
+conda activate openwam
+# export your WAMU real data env (default: datasets/lishanyang_wamu_real)
+export OPEN_WAM_WAMU_REAL_DATA=/path/to/wamu_real
+torchrun --nproc_per_node=4 scripts/train.py \
+  --config-name train_wamu_real_pretrain_robot_self_attn.yaml \
+  model.video_backbone.model_path=assets/video_backbone_ckpt/Wan2.2-TI2V-5B \
+  training.finetune_ckpt_path=/path/to/pretrain_robot_only \
+  training.output_path=/scratch/ou29/rz6525/WAMU/WAMU/outputs/wamu_real_pretrain_robot_self_attn
+```
+
+### 2026-11-13 (v3.2)
+WAMU real, warm-started from the ego + robot pretrained OpenWAM/OpenWAM-Alpha-Pretrain-Foundation-Model.
+Same recipe as v3.0 except the attention mask keeps the checkpoint's own `action sees video`.
+
+**Please download OpenWAM/pretrain_ego_robot_cotrain_action_sees_video**
+```bash
+# Activate your environment
+conda activate openwam
+# export your WAMU real data env (default: datasets/lishanyang_wamu_real)
+export OPEN_WAM_WAMU_REAL_DATA=/path/to/wamu_real
+
+torchrun --nproc_per_node=4 scripts/train.py \
+  --config-name train_wamu_real_pretrain_foundation.yaml \
+  model.video_backbone.model_path=assets/video_backbone_ckpt/Wan2.2-TI2V-5B \
+  training.finetune_ckpt_path=/path/to/OpenWAM-Pretrain-Foundation-Model \
+  training.output_path=/scratch/ou29/rz6525/WAMU/WAMU/outputs/wamu_real_pretrain_foundation
 ```

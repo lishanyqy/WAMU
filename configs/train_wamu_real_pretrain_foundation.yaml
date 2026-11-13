@@ -1,0 +1,13 @@
+defaults:
+  - train_wamu_real_self_attn
+  - _self_
+
+# v3.2 WAMU real: warm-started from OpenWAM/OpenWAM-Alpha-Pretrain-Foundation-Model
+# (ego + robot pretraining, dual_system joint_self_attn). Inherits v3.0's
+# action_sees_video mask (overriding the checkpoint's mutual), so v3.0 / v3.1 /
+# v3.2 differ only in the warm-start weights.
+#   training.finetune_ckpt_path=/path/to/OpenWAM-Alpha-Pretrain-Foundation-Model
+
+training:
+  finetune_ckpt_path: ${oc.env:OPEN_WAM_PRETRAIN_FOUNDATION_CKPT,null}
+  output_path: outputs/wamu_real_pretrain_foundation

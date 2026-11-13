@@ -1,0 +1,11 @@
+defaults:
+  - train_wamu_real_self_attn
+  - _self_
+
+# v3.1 WAMU real: same as v3.0, warm-started from OpenWAM/pretrain_robot_only
+# (dual_system joint_self_attn, action_sees_video, robot-only pretraining).
+# Pass the downloaded checkpoint dir on the command line:
+#   training.finetune_ckpt_path=/path/to/pretrain_robot_only
+training:
+  finetune_ckpt_path: ${oc.env:OPEN_WAM_PRETRAIN_ROBOT_CKPT,null}
+  output_path: outputs/wamu_real_pretrain_robot_self_attn

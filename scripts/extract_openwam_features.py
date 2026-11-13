@@ -78,33 +78,60 @@ def latent_groups(n_frames, n_latents):
 
 def main():
     p=argparse.ArgumentParser(); p.add_argument('--ckpt-dir',type=Path,required=True); p.add_argument('--wan-dir',type=Path,required=True); p.add_argument('--manifest',type=Path,required=True); p.add_argument('--output',type=Path,nargs='+',required=True,help='output dirs in order of preference; later ones are used once earlier ones are full'); p.add_argument('--device',default='cuda:0'); p.add_argument('--seed',type=int,default=0)
-    p.add_argument('--limit',type=int,default=0); args=p.parse_args()
+    p.add_argument('--limit',type=int,default=0)
+    p.add_argument('--lean',action='store_true',help='load on CPU, keep the text encoder and action stream there, only the video backbone on the GPU (~11 GB; shared GPUs)')
+    p.add_argument('--ckpt-name',default=None,help='checkpoint file in --ckpt-dir (default: the highest checkpoint_step_*.safetensors)'); args=p.parse_args()
+    if args.ckpt_name is None:
+        args.ckpt_name=max((q.name for q in args.ckpt_dir.glob('checkpoint_step_*.safetensors')),key=lambda n:int(n.split('_')[-1].split('.')[0]))
+    print(f'checkpoint: {args.ckpt_dir/args.ckpt_name}',flush=True)
     sys.path.insert(0,'.'); from openwam.deploy.model_loader import load_from_checkpoint_dir
     with tempfile.TemporaryDirectory(prefix='openwam_extract_') as td:
         td=Path(td); cfg=OmegaConf.load(args.ckpt_dir/'config.yaml'); cfg.model.video_backbone.model_path=str(args.wan_dir); cfg.model.video_backbone.encoder.model_path=str(args.wan_dir)
         # action_film now defaults to on; checkpoints trained before it existed carry neither the key nor its weights.
         if OmegaConf.select(cfg,'model.architecture.action_film') is None:
             from safetensors import safe_open
-            with safe_open(str(args.ckpt_dir/'checkpoint_step_9890.safetensors'),'pt') as f:
+            with safe_open(str(args.ckpt_dir/args.ckpt_name),'pt') as f:
                 has_film=any('action_film' in k for k in f.keys())
             OmegaConf.update(cfg,'model.architecture.action_film',has_film,force_add=True)
             print(f'action_film not in config; checkpoint has film weights={has_film} -> action_film={has_film}',flush=True)
-        OmegaConf.save(cfg,td/'config.yaml'); (td/'checkpoint_step_1.safetensors').symlink_to(args.ckpt_dir/'checkpoint_step_9890.safetensors'); (td/'normalization_stats.npy').symlink_to(args.ckpt_dir/'normalization_stats.npy')
-        _, arch=load_from_checkpoint_dir(str(td),device=args.device,ckpt_name='checkpoint_step_1.safetensors')
+        OmegaConf.save(cfg,td/'config.yaml'); (td/'checkpoint_step_1.safetensors').symlink_to(args.ckpt_dir/args.ckpt_name); (td/'normalization_stats.npy').symlink_to(args.ckpt_dir/'normalization_stats.npy')
+        _, arch=load_from_checkpoint_dir(str(td),device='cpu' if args.lean else args.device,ckpt_name='checkpoint_step_1.safetensors')
     dl=OmegaConf.load(args.ckpt_dir/'config.yaml').dataloader
     layout=list(dl.camera_layout); height,width=int(dl.height),int(dl.width)
     assert dl.multiview and len(layout)==3, (dl.multiview, layout)
     top_h=int(round(height*2/3))  # assemble_multiview_layout default: head camera fills the top 2/3
     arch.eval(); vb=arch.video_backbone; dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16; outputs=OutputDirs(args.output)
+    from attention_video_share import offload_text_encoder, oom_retry
+    if args.lean:
+        oom_retry(lambda: offload_text_encoder(vb,[PROMPT],args.device),'prompt encoding')
+        dev=torch.device(args.device)
+        def to_gpu():
+            for n,m in vb.named_children():
+                if n!='text_encoder': m.to(device=dev,dtype=torch.bfloat16)
+            vb._device,vb._dtype=dev,torch.bfloat16; torch.cuda.empty_cache()
+        oom_retry(to_gpu,'moving the video backbone to the GPU')
+        print(f'lean: video backbone on GPU, {torch.cuda.memory_allocated()/2**30:.1f} GB allocated',flush=True)
     rows=[json.loads(x) for x in args.manifest.read_text().splitlines() if x.strip()]; rows=rows[:args.limit] if args.limit else rows
     print(f'device={args.device} dtype={dtype} layers={vb.num_layers} layout={layout} canvas={height}x{width}',flush=True)
     for i,row in enumerate(rows,1):
         name=f"{row['task']}__{row['episode']}.npz"
         if outputs.exists(name): continue
         ids,pil=canvas_frames(row,layout,height,width,row.get('num_frames',33),row.get('frame_stride',4))
+        feats=oom_retry(lambda: forward(vb,pil,args.seed,dtype,top_h,height),f"{row['task']}/{row['episode']}")
+        # fp16 activations barely compress, so skip savez_compressed's CPU cost.
+        outputs.save(name,features=feats,task=row['task'],episode=row['episode'],layers=vb.num_layers,dtype=str(dtype),seed=args.seed,
+                            head_grid=np.array([feats.shape[2],feats.shape[3]]),raw_frame_indices=ids,latent_aligned_frames=latent_groups(len(ids),feats.shape[0]),camera_layout=np.array(layout))
+        if i%10==0: print(f'progress={i}/{len(rows)}',flush=True)
+    print(f'complete={len(rows)}',flush=True)
+
+
+PROMPT='A video of a robot manipulating objects'
+
+
+def forward(vb,pil,seed,dtype,top_h,height):
         with torch.inference_mode(), torch.autocast('cuda',dtype=dtype):
-            inputs=vb.preprocess_input_for_train(frames=[pil],text=['A video of a robot manipulating objects'])
-            clean=inputs.pop('input_latents'); noise=torch.randn(clean.shape,generator=torch.Generator(device=clean.device).manual_seed(args.seed),device=clean.device,dtype=clean.dtype); t=torch.full((1,),500.0,device=clean.device,dtype=clean.dtype); inputs['latents']=0.5*clean+0.5*noise; inputs['timestep']=t
+            inputs=vb.preprocess_input_for_train(frames=[pil],text=[PROMPT])
+            clean=inputs.pop('input_latents'); noise=torch.randn(clean.shape,generator=torch.Generator(device=clean.device).manual_seed(seed),device=clean.device,dtype=clean.dtype); t=torch.full((1,),500.0,device=clean.device,dtype=clean.dtype); inputs['latents']=0.5*clean+0.5*noise; inputs['timestep']=t
             state=vb.prepare(**inputs)
             gf,gh,gw=state.grid_frames,state.grid_height,state.grid_width
             head_h=gh*top_h//height; assert head_h*height==gh*top_h, (gh,top_h,height)
@@ -114,9 +141,7 @@ def main():
                 # Tokens are (f h w); keep the head-camera rows of every latent frame.
                 head=state.hidden_states[0].reshape(gf,gh,gw,-1)[:,:head_h]
                 feats.append(head.to(torch.float16).cpu().numpy())
-        # fp16 activations barely compress, so skip savez_compressed's CPU cost.
-        outputs.save(name,features=np.stack(feats,axis=1),task=row['task'],episode=row['episode'],layers=vb.num_layers,dtype=str(dtype),seed=args.seed,
-                            head_grid=np.array([head_h,gw]),raw_frame_indices=ids,latent_aligned_frames=latent_groups(len(ids),gf),camera_layout=np.array(layout))
-        if i%10==0: print(f'progress={i}/{len(rows)}',flush=True)
-    print(f'complete={len(rows)}',flush=True)
+        return np.stack(feats,axis=1)
+
+
 if __name__=='__main__': main()
