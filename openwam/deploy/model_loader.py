@@ -229,6 +229,7 @@ def load_from_checkpoint_dir(
     # actually using (normalizer stats selection, binary dims, torso masking all derive from the
     # training cfg at this point).
     architecture.repr_contract = repr_contract_from_cfg(cfg)
+    architecture.checkpoint_file = os.path.realpath(ckpt_path)
 
     logger.info("Model loaded successfully on %s", device)
     return cfg, architecture

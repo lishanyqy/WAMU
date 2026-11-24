@@ -10,7 +10,7 @@ server:
 # Switching either mode to sync resets only that mode's async-only fields, so
 # an async-tuned yaml can be run as the sync baseline with a single flag.
 inference:
-  denoise_steps: 10
+  denoise_steps: 20
 
   denoise_mode: sync          # trajectory: sync | async; separate from inference_mode
   lead_modality: video        # denoise_mode=async: action | video

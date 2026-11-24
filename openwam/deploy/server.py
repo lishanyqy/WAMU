@@ -251,7 +251,18 @@ class PolicyServer:
                             result["type"] = ACTION
                             await websocket.send(json.dumps(result))
                         elif msg_type == PING:
-                            await websocket.send(json.dumps({"type": PONG, **self._ckpt_contract()}))
+                            reply = {"type": PONG, **self._ckpt_contract()}
+                            from openwam.deploy.executors import resolve_execution_config
+
+                            execution = resolve_execution_config(self.cfg)
+                            reply['execution'] = {
+                                'mode': execution.mode,
+                                'inference_horizon': execution.inference_horizon,
+                            }
+                            checkpoint = getattr(getattr(self.engine, "architecture", None), "checkpoint_file", None)
+                            if checkpoint is not None:
+                                reply["checkpoint"] = checkpoint
+                            await websocket.send(json.dumps(reply))
                         else:
                             await websocket.send(
                                 json.dumps(

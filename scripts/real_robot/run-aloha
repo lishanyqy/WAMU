@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+root="$(cd "$(dirname "$0")" && pwd)"
+exec /home/King/miniconda3/envs/lerobot/bin/python -u "$root/aloha-ceremony-test/run_wamu_hardware.py" "$@"

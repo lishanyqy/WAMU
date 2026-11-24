@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Top camera overlay</title>
+<style>
+  :root { color-scheme: dark; font: 16px system-ui, sans-serif; background: #10151c; color: #eef2f7; }
+  body { margin: 0; }
+  main { max-width: 900px; margin: auto; padding: 24px 16px; }
+  h1 { font-size: 1.5rem; margin: 0 0 16px; }
+  .controls { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: end; margin-bottom: 12px; }
+  label { display: grid; gap: 5px; font-size: .875rem; }
+  [hidden] { display: none; }
+  select, button { font: inherit; min-height: 36px; border: 1px solid #526174; border-radius: 6px; background: #202a36; padding: 4px 8px; }
+  input { accent-color: #78d8ce; min-height: 32px; margin: 0; }
+  .stage { position: relative; aspect-ratio: 4 / 3; background: #05080c; overflow: hidden; }
+  .stage > * { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+  #reference { pointer-events: none; opacity: .5; }
+  #status { min-height: 1.4em; color: #c5d0dc; margin: 8px 0 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Top camera overlay</h1>
+  <div class="controls">
+    <label>Reference frame
+      <select id="task">
+        <option value="bowls-episode-021.png">Bowls · Episode 21</option>
+        <option value="cupstack-episode-017.png">Cupstack · Episode 17</option>
+        <option value="eggpack-episode-070.png">Eggpack · Episode 70</option>
+        <option value="headphones-episode-071.png">Headphones · Episode 71</option>
+      </select>
+    </label>
+    <label><span>Reference opacity <output id="percent" for="opacity">50%</output></span>
+      <input id="opacity" type="range" min="0" max="100" value="50">
+    </label>
+    <button id="start" type="button">Start camera</button>
+  </div>
+  <div class="stage">
+    <img id="live" hidden alt="Live top-camera RGB view">
+    <img id="reference" src="bowls-episode-021.png" alt="Bowls · Episode 21, frame 0">
+  </div>
+  <p id="status" role="status">Camera off. Start the camera to compare it with the reference.</p>
+</main>
+<script>
+  const task = document.getElementById('task');
+  const opacity = document.getElementById('opacity');
+  const percent = document.getElementById('percent');
+  const reference = document.getElementById('reference');
+  const live = document.getElementById('live');
+  const status = document.getElementById('status');
+  const start = document.getElementById('start');
+  task.addEventListener('change', () => {
+    reference.src = task.value;
+    reference.alt = task.selectedOptions[0].textContent + ', frame 0';
+  });
+  opacity.addEventListener('input', () => {
+    reference.style.opacity = Number(opacity.value) / 100;
+    percent.value = opacity.value + '%';
+  });
+
+  function stopCamera() {
+    live.removeAttribute('src');
+    live.hidden = true;
+    start.textContent = 'Start camera';
+    status.textContent = 'Camera off.';
+  }
+
+  start.addEventListener('click', async () => {
+    if (live.hasAttribute('src')) {
+      stopCamera();
+      return;
+    }
+    start.disabled = true;
+    status.textContent = 'Opening the RGB camera…';
+    try {
+      if (location.protocol === 'file:') throw new Error('Open the viewer from the RGB camera server.');
+      const response = await fetch('camera-status');
+      if (!response.ok) throw new Error(await response.text());
+      live.hidden = false;
+      live.src = 'camera.mjpg?' + Date.now();
+      start.textContent = 'Stop camera';
+    } catch (error) {
+      status.textContent = error.message;
+    } finally {
+      start.disabled = false;
+    }
+  });
+  live.addEventListener('load', () => { status.textContent = 'Live · RealSense RGB'; });
+  live.addEventListener('error', () => {
+    if (!live.hasAttribute('src')) return;
+    stopCamera();
+    status.textContent = 'Could not read the RGB stream. Check the camera connection and whether another app is using it.';
+  });
+  window.addEventListener('pagehide', stopCamera);
+</script>
+</body>
+</html>
