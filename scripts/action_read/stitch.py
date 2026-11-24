@@ -41,8 +41,9 @@ def action_state(arch_j, inputs, proprio, noisy, at):
     return dict(x_action=p.x_action, t_mod=p.t_mod, t_embed=p.t_embed, action_freqs=p.action_freqs, context=p.context, context_mask=p.context_mask)
 
 
-def replay_aligned(ab, P, kv, mask_a, H, Dh, AK=None, AV=None, cut=False):
-    """Differentiable action-stream replay (batch 1) on aligned video K/V; same math as read_subspace.replay."""
+def replay_aligned(ab, P, kv, mask_a, H, Dh, AK=None, AV=None, cut=False, align=None):
+    """Differentiable action-stream replay (batch 1) on aligned video K/V; same math as read_subspace.replay.
+    align = (lr, SK, SV): one-shot alignment A = I - lr * S applied as k - lr * (k @ S) (S = sign matrices, any dtype)."""
     from openwam.model.action_backbone.separate_action_dit import ActionDiTState
     from openwam.model.architectures.base import ActionState
     payload = ActionDiTState(x_action=P['x_action'].clone(), t_mod=P['t_mod'], t_embed=P['t_embed'], action_freqs=P['action_freqs'],
@@ -51,10 +52,14 @@ def replay_aligned(ab, P, kv, mask_a, H, Dh, AK=None, AV=None, cut=False):
     for l in range(len(kv)):
         q_a, k_a, v_a, post = ab.pre_attn_at_layer(l, astate)
         k_v, v_v = kv[l]
+        k_v, v_v = k_v.to(q_a.device, non_blocking=True), v_v.to(q_a.device, non_blocking=True)   # cached windows keep K/V on the host
         with torch.autocast('cuda', enabled=False):
             k_v, v_v = k_v.float(), v_v.float()
             if AK is not None:
                 k_v = k_v @ AK[l]; v_v = v_v @ AV[l]
+            if align is not None:
+                lr_, SK, SV = align
+                k_v = k_v - lr_ * (k_v @ SK[l].float()); v_v = v_v - lr_ * (v_v @ SV[l].float())
             heads = lambda t: t.reshape(t.shape[0], t.shape[1], H, Dh).transpose(1, 2).float()
             q, kvh, vvh, kah, vah = heads(q_a), heads(k_v), heads(v_v), heads(k_a), heads(v_a)
             Sv = kvh.shape[2]
@@ -134,7 +139,7 @@ def main():
 
     g = torch.Generator(device=a.device).manual_seed(a.seed)
 
-    def materialize(w):
+    def materialize(w, on_cpu=False):
         """Run M_i on window w for every sigma: returns list of (sigma, kv, mask_a, inputs, proprio, noisy, at, target, mk)."""
         task, ep_idx, ep, s, prompt, ds, key = w
         sample = rs.seeded_sample(ds, ep_idx, s, key); sample['prompt'] = prompt
@@ -158,7 +163,9 @@ def main():
                 an = torch.randn(actions.shape, generator=g, device=actions.device, dtype=actions.dtype)
                 noisy = asched.add_noise(actions, an, asig.view(1, 1, 1)); target = asched.training_target(actions, an)
                 _, pred_i = ai(noisy, at, proprio=proprio, **inputs)
-                kv = [tuple(t.clone() for t in rs.CAP['kv'][l]) for l in range(L)]
+                # the 48 cached train/val windows keep their per-layer video K/V in host memory (48 x 3 sigmas x ~132 MB would
+                # not fit next to the model on a 40 GB GPU); evaluation windows are used immediately and stay on the GPU
+                kv = [tuple((t.to('cpu', copy=True).pin_memory() if on_cpu else t.clone()) for t in rs.CAP['kv'][l]) for l in range(L)]
                 Sv = kv[0][0].shape[1]; M = rs.CAP['mask']
                 mask_a = None if M is None else (M[Sv:, :] if M.dim() == 2 else M[0, 0, Sv:, :])
                 mk = (torch.as_tensor(np.asarray(am)).to(dev).float().view(1, *np.asarray(am).shape) if am is not None else torch.ones_like(pred_i).float())
@@ -176,12 +183,18 @@ def main():
             return action_state(aj, r['inputs'], r['proprio'], r['noisy'], r['at'])
 
     rows = []
+    # M_i's video stream does not depend on the action model and the noise is seeded per window, so every window is
+    # materialized ONCE and shared by all action models j (identical numbers to materializing it per j, 3x less work)
+    mat = lambda w: avs.oom_retry(lambda: materialize(w), f'materialize {w[6]}')
+    t0 = time.time()
+    mat_cpu = lambda w: avs.oom_retry(lambda: materialize(w, on_cpu=True), f'materialize {w[6]}')
+    tr = [r for w in train_w for r in mat_cpu(w)]; va = [r for w in val_w for r in mat_cpu(w)]
+    print(f'materialized {len(train_w)} train + {len(val_w)} val windows ({time.time() - t0:.0f}s)', flush=True)
+    bests = {}
     for mj in a.action_models:
         aj = archs[mj]; abj = aj.action_backbone
         # ---- one-shot training of the alignment matrices
         t0 = time.time()
-        mat = lambda w: avs.oom_retry(lambda: materialize(w), f'materialize {w[6]}')
-        tr = [r for w in train_w for r in mat(w)]; va = [r for w in val_w for r in mat(w)]
         Ps_tr = [payload(aj, r) for r in tr]; Ps_va = [payload(aj, r) for r in va]
         if mj == a.video_model:   # diagonal sanity: rebuilt action state + replay == the model's own prediction
             with torch.no_grad(), torch.autocast('cuda', dtype=torch.bfloat16):
@@ -189,9 +202,9 @@ def main():
             rel = float((pr.float() - tr[0]['pred_i']).norm() / tr[0]['pred_i'].norm())
             print(f'diagonal check {mj}: replay vs model rel diff {rel:.2e}', flush=True)
         d = H * Dh
-        def val_loss(AK, AV):
+        def val_loss(align):
             with torch.no_grad(), torch.autocast('cuda', dtype=torch.bfloat16):
-                return float(np.mean([float(nmse(replay_aligned(abj, P, r['kv'], r['mask_a'], H, Dh, AK, AV), r)) for P, r in zip(Ps_va, va)]))
+                return float(np.mean([float(nmse(replay_aligned(abj, P, r['kv'], r['mask_a'], H, Dh, align=align), r)) for P, r in zip(Ps_va, va)]))
         # One AdamW step from A = I with zero weight decay is, after bias correction, A - lr * g / (|g| + eps) = A - lr * sign(g)
         # (|g| >> eps = 1e-8).  The gradient at A = I is the same for every lr, so it is computed once and the update applied
         # per lr; no optimizer state is kept (saves ~4.5 GB on the shared GPU).
@@ -204,38 +217,42 @@ def main():
             return AK.grad.sign_(), AV.grad.sign_()
         sK, sV = avs.oom_retry(grad_sign, 'alignment gradient')
         torch.cuda.empty_cache()
-        eye = torch.eye(d, device=dev)
         best = None
         for lr in a.lrs:
-            AKl, AVl = eye - lr * sK, eye - lr * sV                      # broadcast over layers
-            vl = val_loss(AKl, AVl)
+            vl = val_loss((lr, sK, sV))
             print(f'  {a.video_model}->{mj} one-shot lr {lr:g}: val NMSE {vl:.5f}', flush=True)
             if best is None or vl < best[0]:
-                best = (vl, lr, AKl, AVl)
-            else:
-                del AKl, AVl
-            torch.cuda.empty_cache()
-        del sK, sV
-        v0 = val_loss(None, None)
+                best = (vl, lr)
+        bests[mj] = (best[0], best[1], sK.to(torch.int8), sV.to(torch.int8))   # signs are exactly +-1/0: int8 is lossless
+        del sK, sV; torch.cuda.empty_cache()
+        v0 = val_loss(None)
         print(f'  {a.video_model}->{mj}: val NMSE zero-shot {v0:.5f}, one-shot best lr {best[1]:g} -> {best[0]:.5f} ({time.time() - t0:.0f}s)', flush=True)
-        del tr, va, Ps_tr, Ps_va
-        # ---- evaluation
-        for set_name, wl in evals.items():
-            acc = {}
-            def eval_window(w):
-                out = []
-                for r in materialize(w):
+        del Ps_tr, Ps_va
+    del tr, va
+    # ---- evaluation: each window materialized once, every action model j evaluated on it
+    for set_name, wl in evals.items():
+        accs = {mj: {} for mj in a.action_models}
+        def eval_window(w):
+            out = []
+            for r in materialize(w):
+                for mj in a.action_models:
+                    aj = archs[mj]; abj = aj.action_backbone; b = bests[mj]
                     P = payload(aj, r)
                     with torch.no_grad(), torch.autocast('cuda', dtype=torch.bfloat16):
                         e0 = float(nmse(replay_aligned(abj, P, r['kv'], r['mask_a'], H, Dh), r))
-                        e1 = float(nmse(replay_aligned(abj, P, r['kv'], r['mask_a'], H, Dh, best[2], best[3]), r))
+                        e1 = float(nmse(replay_aligned(abj, P, r['kv'], r['mask_a'], H, Dh, align=(b[1], b[2], b[3])), r))
                         ec = float(nmse(replay_aligned(abj, P, r['kv'], r['mask_a'], H, Dh, cut=True), r))
-                    out.append((r['si'], (w[0], w[2], e0, e1, ec)))
-                return out
-            for w in wl:
-                for si, row in avs.oom_retry(lambda: eval_window(w), f'eval {w[6]}'):
-                    acc.setdefault(si, []).append(row)
-            for si, lst in acc.items():
+                    out.append((mj, r['si'], (w[0], w[2], e0, e1, ec)))
+            return out
+        t0 = time.time()
+        for wi, w in enumerate(wl):
+            for mj, si, row in avs.oom_retry(lambda: eval_window(w), f'eval {w[6]}'):
+                accs[mj].setdefault(si, []).append(row)
+            if (wi + 1) % 50 == 0 or wi + 1 == len(wl):
+                print(f'  eval {set_name}: {wi + 1}/{len(wl)} windows ({(time.time() - t0) / (wi + 1):.2f} s/window)', flush=True)
+        for mj in a.action_models:
+          best = bests[mj]
+          for si, lst in accs[mj].items():
                 eps = sorted({(x[0], x[1]) for x in lst}); pos = {e: i for i, e in enumerate(eps)}
                 S = np.zeros((len(eps), 3)); n = np.zeros(len(eps))
                 for x in lst:

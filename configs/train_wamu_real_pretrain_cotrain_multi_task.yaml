@@ -1,0 +1,26 @@
+defaults:
+  - train_wamu_real_pretrain_foundation
+  - _self_
+
+# v3.4 WAMU real, ALL four tasks, CONTINUED training of the finished v3.2 run
+# (paperupload/WAMs: action_film/wamu_real_pretrain_foundation/2026-11-21_14-15-41,
+# itself warm-started from OpenWAM/pretrain_ego_robot_cotrain_action_sees_video).
+# Point finetune_ckpt_path at that run folder (it holds config.yaml + tokenizer/ +
+# checkpoint_step_*.safetensors; the highest step, 20000, is picked) or at the
+# .safetensors file inside it:
+#   training.finetune_ckpt_path=/path/to/wamu_real_pretrain_foundation/2026-11-21_14-15-41
+# Weights only: optimizer state was not saved, so LR warmup + cosine restart.
+dataloader:
+  tasks: null                          # all buckets
+  # MUST match the checkpoint being continued (its config.yaml): grippers at 6 / 40.
+  unify_action_map: ["0-6", "34-40"]
+
+training:
+  # Global batch 256 = 16 per GPU x 4 GPUs x accum 4 (same as the v3.2 run).
+  batch_size: 16
+  gradient_accumulation_steps: 4
+  max_steps: 20000
+  # Gentler than v3.2's 1e-4: the run already converged (it ended at ~1e-6),
+  # and warmup + cosine restart from scratch here.
+  learning_rate: 3e-5
+  output_path: outputs/wamu_real_pretrain_cotrain_multi_task

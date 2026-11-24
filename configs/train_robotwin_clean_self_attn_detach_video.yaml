@@ -29,7 +29,7 @@ training:
   num_epochs: null                   # step-driven, as in sft_from_scratch_robotwin_clean
   max_steps: 30000               # Early stop after N steps (null = no limit; required when num_epochs is null)
   batch_size: 16                   # Per-GPU batch size
-  gradient_accumulation_steps: 1                # as in sft_from_scratch_robotwin_clean (self_attention_30k)
+  gradient_accumulation_steps: 4               # as in sft_from_scratch_robotwin_clean (self_attention_30k)
 
   # --- LR scheduler ---
   lr_scheduler: cosine            # cosine with linear warmup; null = constant LR

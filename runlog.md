@@ -185,3 +185,61 @@ torchrun --nproc_per_node=4 scripts/train.py \
   training.finetune_ckpt_path=/path/to/OpenWAM-Pretrain-Foundation-Model \
   training.output_path=/scratch/ou29/rz6525/WAMU/WAMU/outputs/wamu_real_pretrain_foundation
 ```
+
+### 2026-11-25 (v3.3)
+WAMU real, **single task** (`bowls`), warm-started from OpenWAM/pretrain_robot_only.
+Global batch 128 (16 per GPU x 4 GPUs x grad accum 2), 20k steps. Gripper slots same as v3.0-v3.2
+(`unify_action_map: ["0-6", "34-40"]`, inherited from v3.0).
+Pick another task with `dataloader.tasks=[cupstack]` / `[eggpack]` / `[headphones]`.
+
+**Please download OpenWAM/pretrain_robot_only**
+```bash
+# Activate your environment
+conda activate openwam
+# export your WAMU real data env (default: datasets/lishanyang_wamu_real)
+export OPEN_WAM_WAMU_REAL_DATA=/path/to/wamu_real
+torchrun --nproc_per_node=4 scripts/train.py \
+  --config-name train_wamu_real_pretrain_robot_single_task.yaml \
+  model.video_backbone.model_path=assets/video_backbone_ckpt/Wan2.2-TI2V-5B \
+  training.finetune_ckpt_path=/path/to/pretrain_robot_only \
+  'dataloader.tasks=[bowls]' \
+  training.output_path=/scratch/ou29/rz6525/WAMU/WAMU/outputs/wamu_real_pretrain_robot_single_task_bowls
+```
+
+### 2026-11-25 (v3.4)
+续训任务，ckpt从之前训练完的https://huggingface.co/datasets/paperupload/WAMs/blob/main/action_film/wamu_real_pretrain_foundation/2026-11-21_14-15-41/checkpoint_step_20000.safetensors 这个checkpoint开始续训. 之前有保存目录的话，直接training.finetune_ckpt_path指向上级目录就行了，这个是四个任务的，数据集跟v3.0,v3.1 v3.2是一致的
+Same recipe as v3.2 (gripper slots `["0-6", "34-40"]`, global batch 256, 20k steps) except `learning_rate: 3e-5` (v3.2: 1e-4).
+
+**Please download the whole run folder paperupload/WAMs: action_film/wamu_real_pretrain_foundation/2026-11-21_14-15-41/** (config.yaml + tokenizer/ + normalization_stats.npy + checkpoint_step_*.safetensors)
+```bash
+# Activate your environment
+conda activate openwam
+# export your WAMU real data env (default: datasets/lishanyang_wamu_real)
+export OPEN_WAM_WAMU_REAL_DATA=/path/to/wamu_real
+# finetune_ckpt_path: the run folder (highest step = 20000 is picked) or .../checkpoint_step_20000.safetensors
+torchrun --nproc_per_node=4 scripts/train.py \
+  --config-name train_wamu_real_pretrain_cotrain_multi_task.yaml \
+  model.video_backbone.model_path=assets/video_backbone_ckpt/Wan2.2-TI2V-5B \
+  training.finetune_ckpt_path=/path/to/wamu_real_pretrain_foundation/2026-11-21_14-15-41 \
+  training.output_path=/scratch/ou29/rz6525/WAMU/WAMU/outputs/wamu_real_pretrain_cotrain_multi_task
+```
+
+### 2026-11-25 (v3.5)
+WAMU real, **single task** (`bowls`), warm-started from the human (ego) + robot co-trained
+OpenWAM/pretrain_ego_robot_cotrain_action_sees_video. 
+.
+这个用的就是从huggingface上下载下来的ckpt，repo_id = OpenWAM/pretrain_ego_robot_cotrain_action_sees_video
+这个是只训一个任务。
+**Please download OpenWAM/pretrain_ego_robot_cotrain_action_sees_video**
+```bash
+# Activate your environment
+conda activate openwam
+# export your WAMU real data env (default: datasets/lishanyang_wamu_real)
+export OPEN_WAM_WAMU_REAL_DATA=/path/to/wamu_real
+torchrun --nproc_per_node=4 scripts/train.py \
+  --config-name train_wamu_real_pretrain_cotrain_single_task.yaml \
+  model.video_backbone.model_path=assets/video_backbone_ckpt/Wan2.2-TI2V-5B \
+  training.finetune_ckpt_path=/path/to/pretrain_ego_robot_cotrain_action_sees_video \
+  'dataloader.tasks=[bowls]' \
+  training.output_path=/path/to/WAMU/outputs/wamu_real_pretrain_cotrain_single_task_bowls
+```

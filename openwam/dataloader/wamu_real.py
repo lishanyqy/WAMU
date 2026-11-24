@@ -15,7 +15,7 @@ import numpy as np
 from openwam.dataloader.bases import LeRobotV3Reader, MultiLeRobotV3Reader
 from openwam.dataloader.utils import get_cfg
 from openwam.dataloader.utils.normalization import apply_normalization, materialize_eef_stats
-from openwam.dataloader.utils.unify_action import UNIFY_DIM
+from openwam.dataloader.utils.unify_action import UNIFY_DIM, parse_unify_spec
 
 
 EXPECTED_NAMES = (
@@ -49,6 +49,17 @@ class WamuRealDataset(LeRobotV3Reader):
         # ``cupstack``... (WAMsU/wamu_real) or the older ``*_lerobot`` names.
         # The root ``meta/`` (shared stats only, no info.json) is never a bucket.
         subdirs = [p for p in sorted(root.iterdir()) if p.is_dir() and (p / "meta" / "info.json").is_file()]
+        # Optional ``tasks`` filter (bucket dir names, e.g. [cupstack]); None = all.
+        # Normalization still uses the shared root stats, so a single-task run is
+        # directly comparable with the multi-task one.
+        wanted = get_cfg(config, "tasks", None)
+        if wanted is not None:
+            wanted = [str(wanted)] if isinstance(wanted, str) else [str(t) for t in wanted]
+            available = sorted(p.name for p in subdirs)
+            missing = sorted(set(wanted) - set(available))
+            if missing:
+                raise ValueError(f"WAMUReal tasks {missing} not found under {root}; available: {available}")
+            subdirs = [p for p in subdirs if p.name in wanted]
         buckets = []
         for subdir in subdirs:
             if not (subdir / "meta" / "info.json").is_file():
@@ -60,13 +71,19 @@ class WamuRealDataset(LeRobotV3Reader):
                     kwargs[key] = value
             # headphones is a single-left-arm 7-D bucket; the other
             # three tasks are bimanual 14-D. Keep both in the shared 80-D
-            # space, with the single arm occupying the left-arm slots.
+            # space, with the single arm occupying the left-arm slots, i.e. the
+            # first 7 entries of the configured 14-D map (gripper stays at the
+            # same slot as in the bimanual buckets).
             import json
             with (subdir / "meta" / "info.json").open(encoding="utf-8") as handle:
                 source_dim = int(json.load(handle)["features"]["action"]["shape"][0])
             if source_dim == 7:
-                kwargs["unify_action_map"] = ["0-6"]
-                kwargs["unify_state_map"] = ["0-6"]
+                full_map = get_cfg(config, "unify_action_map", None)
+                left_map = (
+                    parse_unify_spec(full_map, UNIFY_DIM)[:7].tolist() if full_map is not None else list(range(7))
+                )
+                kwargs["unify_action_map"] = left_map
+                kwargs["unify_state_map"] = left_map
             buckets.append(cls(**kwargs))
         if not buckets:
             raise FileNotFoundError(f"WAMUReal root has no <bucket>/meta/info.json buckets: {root}")

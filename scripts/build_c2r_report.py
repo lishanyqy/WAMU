@@ -16,6 +16,8 @@ MODELS = [  # fixed order = fixed colour slot
     ('self_attn_detach_robotwin_clean', 'self-attn-detach', 'self-attn, video K/V detached for the action rows'),
     ('sft_ego_robot_cotrain_robotwin_clean_action_sees_video', 'pretrained self-attn', 'self-attn from the ego/robot co-trained checkpoint'),
     ('sft_robot_only_robotwin_clean', 'pretrained-robot-only', 'self-attn from a robot-only pretrained checkpoint (rand test only)'),
+    ('cross_attn_direct', 'cross-attn-direct', 'cross-attn reading the video DiT\'s own K/V, no bridge projection (rand test only)'),
+    ('cross_attention_softmax', 'cross-attn-softmax', 'cross-attn whose query attends to [action ; video] keys in one softmax (rand test only)'),
 ]
 # (key, label, file, task filter, csv column, lower is better, decimals, unit, reference line {domain: value} or None)
 METRICS = [
@@ -76,17 +78,17 @@ TEMPLATE = r'''<title>Clean2Rand Probes</title>
 :root {
   --bg: #fbfbfa; --surface: #ffffff; --ink: #121417; --ink-2: #4e5258; --ink-3: #80848a; --rule: #e3e4e2; --grid: #eeefed;
   --accent: #2a78d6; --good: #0a7a3b; --bad: #b3261e; --chip: #f1f2f0;
-  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --s5: #e87ba4; --s6: #008300;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --s5: #e87ba4; --s6: #008300; --s7: #6250d6; --s8: #e34948;
   --sans: "Figtree", "Segoe UI", system-ui, sans-serif; --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
 }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
   --bg: #161716; --surface: #1d1e1d; --ink: #eceeea; --ink-2: #b9bcb6; --ink-3: #8b8e88; --rule: #31332f; --grid: #282a27;
   --accent: #3987e5; --good: #4cc27c; --bad: #f08a83; --chip: #262825;
-  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s6: #008300; color-scheme: dark } }
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767; color-scheme: dark } }
 :root[data-theme="dark"] {
   --bg: #161716; --surface: #1d1e1d; --ink: #eceeea; --ink-2: #b9bcb6; --ink-3: #8b8e88; --rule: #31332f; --grid: #282a27;
   --accent: #3987e5; --good: #4cc27c; --bad: #f08a83; --chip: #262825;
-  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s6: #008300; color-scheme: dark }
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767; color-scheme: dark }
 body { background: var(--bg); color: var(--ink); font: 15px/1.6 var(--sans); }
 .wrap { max-width: 1080px; margin: 0 auto; padding-block: 40px 64px;
   padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 40px; }
@@ -143,7 +145,7 @@ code { font: 12.5px var(--mono); background: var(--chip); padding: 1px 5px; bord
 <header>
   <div class="eyebrow">OpenWAM · downstream probes · Aloha-Agilex</div>
   <h1>Clean2Rand probes: what survives domain randomization</h1>
-  <p>Six clean-trained OpenWAM models (pretrained-robot-only was tested on rand only, so it has no clean score or retention). Each probe is trained once on clean scenes, then tested on held-out clean scenes and on the same
+  <p>Eight clean-trained OpenWAM models (pretrained-robot-only, cross-attn-direct and cross-attn-softmax were tested on rand only, so they have no clean score or retention). Each probe is trained once on clean scenes, then tested on held-out clean scenes and on the same
      tasks replayed with randomized backgrounds, lighting, table height and cluttered tables. All numbers are frozen video-backbone tokens
      (head camera, unpooled, σ = 0.5), probed layer by layer.</p>
 </header>

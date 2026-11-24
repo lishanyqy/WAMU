@@ -104,6 +104,28 @@ def video_entropies(p_video, grid):
     return float(entropy(pv).mean()), entropy(pf).mean(tuple(range(pf.dim() - 2))).cpu().numpy()   # scalar, (Fr,)
 
 
+def add_joint_decomposition(rec, p, logits, Sv):
+    """Joint softmax over [video ; action] keys, per row (action token, head), exactly:
+        H_all = H_b(g) + g * H_video + (1 - g) * H_action,   g = mass on video keys,
+    and the log-odds of the video share, log(g / (1 - g)) = lse(s_video) - lse(s_action), with
+    lse(s) = mean(s) + ln(n_keys) + spread(s)  (spread = lse - mean - ln n >= 0, the dispersion of the logits)."""
+    # float64, and the action mass summed directly rather than as 1 - g: in float32 1 - 1e-12 rounds to 1, so rows with
+    # (almost) all mass on video gave 0 * log 0 = nan. With xlogy and a zero weight those rows contribute exactly 0.
+    pv, pa = p[..., :Sv].double(), p[..., Sv:].double()
+    g, ga = pv.sum(-1), pa.sum(-1)
+    hb = -(torch.special.xlogy(g, g) + torch.special.xlogy(ga, ga))
+    hv = entropy(pv / g.clamp_min(1e-300).unsqueeze(-1)); ha = entropy(pa / ga.clamp_min(1e-300).unsqueeze(-1))
+    sv, sa = logits[..., :Sv], logits[..., Sv:]
+    ok_a = torch.isfinite(sa)
+    na = ok_a.sum(-1).clamp_min(1).float()
+    lse_v, lse_a = sv.logsumexp(-1), sa.logsumexp(-1)
+    mv, ma = sv.mean(-1), torch.where(ok_a, sa, torch.zeros_like(sa)).sum(-1) / na
+    for key, val in (('dec_gamma', g), ('dec_hb', hb), ('dec_g_hv', g * hv), ('dec_1mg_ha', ga * ha), ('dec_hv', hv), ('dec_ha', ha),
+                     ('dec_logodds', lse_v - lse_a), ('dec_mean_v', mv), ('dec_mean_a', ma),
+                     ('dec_spread_v', lse_v - mv - math.log(Sv)), ('dec_spread_a', lse_a - ma - na.log())):
+        rec[key] = rec.get(key, 0.0) + float(val.mean())
+
+
 def add_video_entropies(rec, p_video):
     ev, ef = video_entropies(p_video, STATE['grid'])
     rec['entropy_video'] += ev; rec['entropy_frame'] = rec['entropy_frame'][:len(ef)] + ef
@@ -149,6 +171,7 @@ def install_self_attn_hooks(arch):
         rec['head_video'] += pv.sum(-1).mean((0, 2)).cpu().numpy()
         rec['entropy'] += float(entropy(p).mean())
         add_video_entropies(rec, pv)
+        add_joint_decomposition(rec, p, logits, Sv)
         rec['mass_video_query'] += pv.sum(-1).mean((0, 1)).cpu().numpy()          # per action step
         STATE['video_part'] = (pv @ vv[:, :, :Sv]).transpose(1, 2).reshape(B, Sa, H * Dh)
         return out
@@ -322,6 +345,8 @@ def place_on_gpu(arch, device):
 
 def new_rec(L, H, Fr, Sa):
     return [dict(mass_video_frame=np.zeros(Fr), mass_head=0.0, mass_wrist=0.0, mass_action=0.0, head_video=np.zeros(H), entropy=0.0, entropy_video=0.0, entropy_frame=np.zeros(Fr),
+                 **{k: 0.0 for k in ('dec_gamma', 'dec_hb', 'dec_g_hv', 'dec_1mg_ha', 'dec_hv', 'dec_ha', 'dec_logodds', 'dec_mean_v',
+                                     'dec_mean_a', 'dec_spread_v', 'dec_spread_a')},
                  mass_video_query=np.zeros(Sa), r_video=0.0, r_attn=0.0, frac_video=0.0) for _ in range(L)]
 
 

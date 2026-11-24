@@ -1,0 +1,18 @@
+defaults:
+  - train_wamu_real_pretrain_robot_self_attn
+  - _self_
+
+# v3.3 WAMU real, SINGLE task (bowls), warm-started from OpenWAM/pretrain_robot_only.
+# Gripper slots: same as v3.0-v3.2 (inherited from v3.0):
+# unify_action_map ["0-6", "34-40"].
+#   training.finetune_ckpt_path=/path/to/pretrain_robot_only
+#   dataloader.tasks=[bowls] | [cupstack] | [eggpack] | [headphones]
+dataloader:
+  tasks: [bowls]
+
+training:
+  # Global batch 128 = 16 per GPU x 4 GPUs x accum 2.
+  batch_size: 16
+  gradient_accumulation_steps: 2
+  max_steps: 20000
+  output_path: outputs/wamu_real_pretrain_robot_single_task

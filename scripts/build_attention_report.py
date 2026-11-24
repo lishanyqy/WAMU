@@ -23,7 +23,7 @@ ORDER_SETS = {'v1': ['joint_self_attention', 'joint_self_attention_mutual', 'joi
                      'sft_ego_robot_cotrain_robotwin_full_action_sees_video', 'joint_cross_attention', 'joint_cross_attention_detach'],
               'v2': ['sft_from_scratch_robotwin_clean', 'cross_attn_clean', 'cross_attn_detach_robotwin_clean', 'cross_attn_clean_fix3072', 'cross_attention_softmax'],
               'c2r': ['sft_from_scratch_robotwin_clean', 'cross_attn_clean', 'cross_attn_detach_robotwin_clean', 'self_attn_detach_robotwin_clean',
-                      'sft_ego_robot_cotrain_robotwin_clean_action_sees_video', 'sft_robot_only_robotwin_clean', 'cross_attn_direct']}
+                      'sft_ego_robot_cotrain_robotwin_clean_action_sees_video', 'sft_robot_only_robotwin_clean', 'cross_attn_direct', 'cross_attention_softmax']}
 ORDER = ORDER_SETS[SET]
 OUT = ROOT / (('reports/openwam_attention.html' if EMB == 'franka' else f'reports/openwam_attention_{EMB.split("-")[0]}.html') if SET == 'v1' else f'reports/openwam_attention_{SET}_{EMB if SET == "c2r" else EMB.split("-")[0]}.html')
 MODE = {'joint_self_attention': 'action sees all video', 'joint_self_attention_mutual': 'mutual: action sees all video, video sees action',
@@ -43,7 +43,7 @@ MODE.update({'self_attn_detach_robotwin_clean': 'self-attention, action sees all
              'cross_attn_direct': 'cross-attention whose action query reads the video DiT\'s own K/V at each layer (no bridge projection), separate softmax'})
 if SET == 'c2r':   # same names as reports/openwam_clean2rand.html
     DISPLAY_V2 = {'sft_from_scratch_robotwin_clean': 'self-attn', 'cross_attn_clean': 'cross-attn', 'cross_attn_detach_robotwin_clean': 'cross-attn-detach',
-                  'self_attn_detach_robotwin_clean': 'self-attn-detach', 'sft_ego_robot_cotrain_robotwin_clean_action_sees_video': 'pretrained', 'sft_robot_only_robotwin_clean': 'pretrained-robot-only', 'cross_attn_direct': 'cross-attn-direct'}
+                  'self_attn_detach_robotwin_clean': 'self-attn-detach', 'sft_ego_robot_cotrain_robotwin_clean_action_sees_video': 'pretrained', 'sft_robot_only_robotwin_clean': 'pretrained-robot-only', 'cross_attn_direct': 'cross-attn-direct', 'cross_attention_softmax': 'cross-attn-softmax'}
 # success rates of the four 30k-step checkpoints (user, 2026-10-29): self-attention 14 >> cross_attn 4.8 >= detach 4 > fix3072 3
 SUCCESS = dict(SUCCESS, sft_from_scratch_robotwin_clean=14.0, cross_attn_clean=4.8, cross_attn_detach_robotwin_clean=4.0, cross_attn_clean_fix3072=3.0)
 def disp(m):

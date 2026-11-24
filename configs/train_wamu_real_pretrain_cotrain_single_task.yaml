@@ -1,0 +1,19 @@
+defaults:
+  - train_wamu_real_pretrain_foundation
+  - _self_
+
+# v3.5 WAMU real, SINGLE task (bowls), warm-started from the human (ego) + robot
+# co-trained OpenWAM/pretrain_ego_robot_cotrain_action_sees_video. Same recipe as
+# v3.3 (train_wamu_real_pretrain_robot_single_task.yaml); only the warm-start
+# checkpoint differs. Gripper slots: ["0-6", "34-40"] (inherited, same as v3.0-v3.2).
+#   training.finetune_ckpt_path=/path/to/pretrain_ego_robot_cotrain_action_sees_video
+#   dataloader.tasks=[bowls] | [cupstack] | [eggpack] | [headphones]
+dataloader:
+  tasks: [bowls]
+
+training:
+  # Global batch 128 = 16 per GPU x 4 GPUs x accum 2 (same as v3.3).
+  batch_size: 16
+  gradient_accumulation_steps: 2
+  max_steps: 20000
+  output_path: outputs/wamu_real_pretrain_cotrain_single_task
