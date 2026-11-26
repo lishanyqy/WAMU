@@ -243,3 +243,39 @@ torchrun --nproc_per_node=4 scripts/train.py \
   'dataloader.tasks=[bowls]' \
   training.output_path=/path/to/WAMU/outputs/wamu_real_pretrain_cotrain_single_task_bowls
 ```
+
+### 2026-11-26 (v3.6)
+续训任务：从训完的 v3.0 (joint self-attention, Wan2.2 only) 的 step 20000 续训，四个任务，数据集跟 v3.0/v3.1/v3.2 一致。
+Same recipe as v3.4 (gripper slots `["0-6", "34-40"]`, global batch 256, 20k steps, `learning_rate: 3e-5`).
+
+**Please download the whole run folder paperupload/WAMs: action_film/wamu_real_self_attn/2026-11-21_12-56-52/** (config.yaml + tokenizer/ + normalization_stats.npy + checkpoint_step_*.safetensors)
+```bash
+# Activate your environment
+conda activate openwam
+# export your WAMU real data env (default: datasets/lishanyang_wamu_real)
+export OPEN_WAM_WAMU_REAL_DATA=/path/to/wamu_real
+# finetune_ckpt_path: the run folder (highest step = 20000 is picked) or .../checkpoint_step_20000.safetensors
+torchrun --nproc_per_node=4 scripts/train.py \
+  --config-name train_wamu_real_self_attn_continue.yaml \
+  model.video_backbone.model_path=assets/video_backbone_ckpt/Wan2.2-TI2V-5B \
+  training.finetune_ckpt_path=/path/to/wamu_real_self_attn/2026-11-21_12-56-52 \
+  training.output_path=/scratch/ou29/rz6525/WAMU/WAMU/outputs/wamu_real_self_attn_continue
+```
+
+### 2026-11-26 (v3.7)
+续训任务：从训完的 v3.1 (warm-started from OpenWAM/pretrain_robot_only) 的 step 20000 续训，四个任务，数据集跟 v3.0/v3.1/v3.2 一致。
+Same recipe as v3.4 (gripper slots `["0-6", "34-40"]`, global batch 256, 20k steps, `learning_rate: 3e-5`).
+
+**Please download the whole run folder paperupload/WAMs: action_film/wamu_real_pretrain_robot_self_attn/2026-11-21_14-57-31/** (config.yaml + tokenizer/ + normalization_stats.npy + checkpoint_step_*.safetensors)
+```bash
+# Activate your environment
+conda activate openwam
+# export your WAMU real data env (default: datasets/lishanyang_wamu_real)
+export OPEN_WAM_WAMU_REAL_DATA=/path/to/wamu_real
+# finetune_ckpt_path: the run folder (highest step = 20000 is picked) or .../checkpoint_step_20000.safetensors
+torchrun --nproc_per_node=4 scripts/train.py \
+  --config-name train_wamu_real_pretrain_robot_self_attn_continue.yaml \
+  model.video_backbone.model_path=assets/video_backbone_ckpt/Wan2.2-TI2V-5B \
+  training.finetune_ckpt_path=/path/to/wamu_real_pretrain_robot_self_attn/2026-11-21_14-57-31 \
+  training.output_path=/scratch/ou29/rz6525/WAMU/WAMU/outputs/wamu_real_pretrain_robot_self_attn_continue
+```

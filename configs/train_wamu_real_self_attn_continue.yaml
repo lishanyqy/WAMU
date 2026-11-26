@@ -1,0 +1,24 @@
+defaults:
+  - train_wamu_real_self_attn
+  - _self_
+
+# v3.6 WAMU real, ALL four tasks, CONTINUED training of the finished v3.0 run (joint self-attention from Wan2.2 only)
+# (paperupload/WAMs: action_film/wamu_real_self_attn/2026-11-21_12-56-52).
+# Point finetune_ckpt_path at that run folder (config.yaml + tokenizer/ +
+# checkpoint_step_*.safetensors; the highest step, 20000, is picked) or at the
+# .safetensors file inside it. Weights only: optimizer state was not saved, so
+# LR warmup + cosine restart. Same recipe as v3.4.
+#   training.finetune_ckpt_path=/path/to/wamu_real_self_attn/2026-11-21_12-56-52
+dataloader:
+  tasks: null                          # all buckets
+  # MUST match the checkpoint being continued (its config.yaml): grippers at 6 / 40.
+  unify_action_map: ["0-6", "34-40"]
+
+training:
+  # Global batch 256 = 16 per GPU x 4 GPUs x accum 4 (same as the original run).
+  batch_size: 16
+  gradient_accumulation_steps: 4
+  max_steps: 20000
+  # Gentler than the original 1e-4: the run already converged (it ended at ~1e-6).
+  learning_rate: 3e-5
+  output_path: outputs/wamu_real_self_attn_continue
