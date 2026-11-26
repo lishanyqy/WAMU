@@ -1,0 +1,176 @@
+============================================================
+OpenWAM Training
+============================================================
+model:
+  video_backbone:
+    encoder:
+      name: wan22_vae
+      model_path: /path/to/Wan2.2-TI2V-5B
+    name: wan22_ti2v_5b
+    model_path: assets/video_backbone_ckpt/Wan2.2-TI2V-5B
+    from_scratch: false
+    shift_video: 5.0
+  action_backbone:
+    dim: 1024
+    ffn_dim: 4096
+    shift_action: 5.0
+  freeze:
+  - video_backbone.text_encoder
+  - video_backbone.reason1
+  - video_backbone.vae
+  - video_backbone.image_encoder
+  - video_backbone.video_encoder
+  architecture:
+    framework: dual_system
+    variant: joint_self_attn
+    action_dim: 80
+    use_proprioception: true
+    state_dim: 80
+    attention_mask_mode: action_sees_video
+    video_attention_mask_mode: first_frame_causal
+    action_film: false
+    film_cond_dim: 2048
+    film_type: mean
+    film_token_reduction: 8
+    film_num_action_tokens: null
+    bridge_layers: null
+    bridge_interval: 1
+    mot_checkpoint_mixed_attn: true
+    detach_bridge: false
+    detach_video: false
+    bridge_noise:
+      enabled: false
+      p_clean: 0.3
+      ratio_min: 0.1
+      ratio_max: 0.2
+      block: 2
+      future_weight: 2.5
+      gauss_prob: 0.5
+      sigma_min: 0.5
+      sigma_max: 1.5
+      seed: 0
+    idm_video_cond_noise_prob: 0.5
+dataloader:
+  type: wamu_real
+  dataset_dir: ${oc.env:OPEN_WAM_WAMU_REAL_DATA,datasets/lishanyang_wamu_real}
+  embodiment: aloha-agilex
+  variant: both
+  action_mode: joint
+  unify_action: true
+  unify_action_map:
+  - 0-6
+  - 34-40
+  unify_state_map: null
+  num_frames: 33
+  video_stride: 4
+  window_stride: 1
+  split: train
+  height: 384
+  width: 320
+  multiview: true
+  camera_layout:
+  - observation.images.top
+  - observation.images.left_wrist
+  - observation.images.right_wrist
+  target_camera: observation.images.top
+  normalize_mode: quantile
+  color_jitter:
+    enabled: true
+    brightness: 0.2
+    contrast: 0.2
+    saturation: 0.2
+    hue: 0.0
+  normalization_stats_path: ${dataloader.dataset_dir}/meta/stats.json
+  tasks:
+  - bowls
+training:
+  debug: false
+  learning_rate: 0.0001
+  adam_betas:
+  - 0.9
+  - 0.95
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  num_epochs: null
+  max_steps: 20000
+  batch_size: 16
+  gradient_accumulation_steps: 2
+  lr_scheduler: cosine
+  warmup_ratio: 0.05
+  lr_min_ratio: 0.01
+  action_lr: null
+  video_lr: null
+  mixed_precision: bf16
+  zero_stage: 2
+  use_gradient_checkpointing: true
+  use_gradient_checkpointing_offload: false
+  initialize_model_on_cpu: false
+  offload_optimizer_device: none
+  lambda_video: 1.0
+  lambda_action: 1.0
+  max_timestep_boundary: 1.0
+  min_timestep_boundary: 0.0
+  output_path: /scratch/zv32/rz6525/WAMU/outputs/wamu_real_pretrain_cotrain_single_task_bowls
+  save_steps: 3000
+  save_full_states_for_resume: false
+  keep_last_k_ckpts: 4
+  finetune_ckpt_path: /scratch/zv32/rz6525/WAMU/OpenWAM/pretrain_ego_robot_cotrain_action_sees_video
+  resume_ckpt_path: null
+  dataset_num_workers: 8
+project:
+  name: openwam-wamu-real
+  wandb:
+    enabled: false
+    project: openwam-wamu-real
+
+============================================================
+[2026-11-25 03:36:08,690][__main__][INFO] - mixed_precision = bf16 (from cfg.training.mixed_precision)
+Warning: The cache directory for DeepSpeed Triton autotune, /home/659/rz6525/.triton/autotune, appears to be on an NFS system. While this is generally acceptable, if you experience slowdowns or hanging when DeepSpeed exits, it is recommended to set the TRITON_CACHE_DIR environment variable to a non-NFS path.
+[2026-11-25 03:37:56,973][accelerate.utils.other][WARNING] - [RANK 0] Detected kernel version 4.18.0, which is below the recommended minimum of 5.5.0; this can cause the process to hang. It is recommended to upgrade the kernel to the minimum version or higher.
+[2026-11-25 03:37:59,415][openwam.dataloader.utils.lerobotv3][INFO] - WAMUReal(bowls): split=train from info.json (episode_index 0:50, 50 eps)
+[2026-11-25 03:37:59,415][openwam.dataloader.utils.lerobotv3][INFO] - WAMUReal(bowls): split=train from info.json (episode_index 0:50, 50 eps)
+[2026-11-25 03:37:59,416][openwam.dataloader.utils.lerobotv3][INFO] - WAMUReal(bowls): split=train from info.json (episode_index 0:50, 50 eps)
+[2026-11-25 03:37:59,416][openwam.dataloader.utils.lerobotv3][INFO] - WAMUReal(bowls): split=train from info.json (episode_index 0:50, 50 eps)
+[2026-11-25 03:37:59,597][openwam.dataloader.bases.lerobot_v3_reader][INFO] - WAMUReal(bowls, train): 50 eps, 41479 windows, fps=15.0, multiview=True, normalize=quantile
+[2026-11-25 03:37:59,597][openwam.dataloader.bases.lerobot_v3_reader][INFO] - WAMUReal(bowls, train): 50 eps, 41479 windows, fps=15.0, multiview=True, normalize=quantile
+[2026-11-25 03:37:59,597][openwam.dataloader.bases.lerobot_v3_reader][INFO] - WAMUReal(bowls, train): 50 eps, 41479 windows, fps=15.0, multiview=True, normalize=quantile
+[2026-11-25 03:37:59,597][openwam.dataloader.bases.lerobot_v3_reader][INFO] - WAMUReal(bowls, train): 50 eps, 41479 windows, fps=15.0, multiview=True, normalize=quantile
+[finetune] model config = /scratch/zv32/rz6525/WAMU/OpenWAM/pretrain_ego_robot_cotrain_action_sees_video/config.yaml (base) + live cfg.model (override): 1 overridden, 16 live-only, 7 ckpt-only
+[finetune]   override  model.video_backbone.model_path: '/path/to/Wan2.2-TI2V-5B' (ckpt) -> 'assets/video_backbone_ckpt/Wan2.2-TI2V-5B' (live)
+[finetune] loading pretrained weights: /scratch/zv32/rz6525/WAMU/OpenWAM/pretrain_ego_robot_cotrain_action_sees_video/checkpoint_step_3950.safetensors
+[finetune] pretrained weights loaded OK
+============================================================
+Parameter counts
+  video_backbone : total=11385.4M  trainable= 4999.8M
+  action_backbone: total= 1021.0M  trainable= 1021.0M
+  proprio_encoder: total=    0.3M  trainable=    0.3M
+  Architecture  : total=12406.8M  trainable= 6021.2M
+============================================================
+[checkpoint] Saving step 3000 -> /scratch/zv32/rz6525/WAMU/outputs/wamu_real_pretrain_cotrain_single_task_bowls/2026-11-25_03-40-38/checkpoint_step_3000.safetensors
+[checkpoint] Saved: /scratch/zv32/rz6525/WAMU/outputs/wamu_real_pretrain_cotrain_single_task_bowls/2026-11-25_03-40-38/checkpoint_step_3000.safetensors
+[checkpoint] Saving step 6000 -> /scratch/zv32/rz6525/WAMU/outputs/wamu_real_pretrain_cotrain_single_task_bowls/2026-11-25_03-40-38/checkpoint_step_6000.safetensors
+[checkpoint] Saved: /scratch/zv32/rz6525/WAMU/outputs/wamu_real_pretrain_cotrain_single_task_bowls/2026-11-25_03-40-38/checkpoint_step_6000.safetensors
+[checkpoint] Saving step 9000 -> /scratch/zv32/rz6525/WAMU/outputs/wamu_real_pretrain_cotrain_single_task_bowls/2026-11-25_03-40-38/checkpoint_step_9000.safetensors
+[checkpoint] Saved: /scratch/zv32/rz6525/WAMU/outputs/wamu_real_pretrain_cotrain_single_task_bowls/2026-11-25_03-40-38/checkpoint_step_9000.safetensors
+[checkpoint] Saving step 12000 -> /scratch/zv32/rz6525/WAMU/outputs/wamu_real_pretrain_cotrain_single_task_bowls/2026-11-25_03-40-38/checkpoint_step_12000.safetensors
+[checkpoint] Saved: /scratch/zv32/rz6525/WAMU/outputs/wamu_real_pretrain_cotrain_single_task_bowls/2026-11-25_03-40-38/checkpoint_step_12000.safetensors
+[checkpoint] Saving step 15000 -> /scratch/zv32/rz6525/WAMU/outputs/wamu_real_pretrain_cotrain_single_task_bowls/2026-11-25_03-40-38/checkpoint_step_15000.safetensors
+[checkpoint] Saved: /scratch/zv32/rz6525/WAMU/outputs/wamu_real_pretrain_cotrain_single_task_bowls/2026-11-25_03-40-38/checkpoint_step_15000.safetensors
+[checkpoint] Saving step 18000 -> /scratch/zv32/rz6525/WAMU/outputs/wamu_real_pretrain_cotrain_single_task_bowls/2026-11-25_03-40-38/checkpoint_step_18000.safetensors
+[checkpoint] Saved: /scratch/zv32/rz6525/WAMU/outputs/wamu_real_pretrain_cotrain_single_task_bowls/2026-11-25_03-40-38/checkpoint_step_18000.safetensors
+[checkpoint] Saving final step 20000 -> /scratch/zv32/rz6525/WAMU/outputs/wamu_real_pretrain_cotrain_single_task_bowls/2026-11-25_03-40-38/checkpoint_step_20000.safetensors
+[checkpoint] Saved final: /scratch/zv32/rz6525/WAMU/outputs/wamu_real_pretrain_cotrain_single_task_bowls/2026-11-25_03-40-38/checkpoint_step_20000.safetensors
+
+======================================================================================
+                  Resource Usage on 2026-11-25 17:10:17:
+   Job Id:             185098394.gadi-pbs
+   Project:            at16
+   Exit Status:        0
+   Service Units:      4903.10
+   NCPUs Requested:    48                  CPU Time Used: 543:23:24       
+   Memory Requested:   200.0GB               Memory Used: 200.0GB         
+   NGPUs Requested:    4                 GPU Utilisation: 0%              
+                                         GPU Memory Used: 293.15GB        
+   Walltime Requested: 21:00:00            Walltime Used: 13:37:11        
+   JobFS Requested:    200.0GB                JobFS Used: 0B              
+======================================================================================
